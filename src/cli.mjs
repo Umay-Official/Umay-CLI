@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chat, friendlyError, validateBaseURL, DEFAULT_BASE_URL, DEFAULT_MODEL } from './client.mjs';
 import { ToolRuntime } from './tools.mjs';
-import { t, color, clean, banner, box, rule, spinner, fileLink, width } from './theme.mjs';
+import { t, color, clean, banner, box, rule, spinner, fileLink, width, formatStats } from './theme.mjs';
 import { markdownStream } from './markdown.mjs';
 import { loadAttachment, buildUserContent, importGitHub, UserError } from './attachments.mjs';
 import { GENERATORS, generate } from './documents.mjs';
@@ -349,9 +349,8 @@ async function main() {
   };
   if (toolsOn) await ensureRuntime();
 
-  const footer = (start, usage) => {
-    const tokens = usage?.totalTokens;
-    console.log(`\n  ${t.dim(`süre ${((Date.now() - start) / 1000).toFixed(1)} sn${Number.isFinite(tokens) ? ` · ${tokens} token` : ''}`)}`);
+  const footer = (start, usage, stats) => {
+    console.log(`\n  ${t.dim(formatStats((Date.now() - start) / 1000, usage, stats))}`);
   };
 
   async function sendChat(input) {
@@ -366,7 +365,7 @@ async function main() {
         onText: view.text, onReasoning: view.reasoning });
       view.finish();
       messages = [...pending, ...response.messages];
-      footer(start, response.usage);
+      footer(start, response.usage, response.stats);
       if (response.finishReason === 'length') note('Yanıt uzunluk sınırında bitti. "devam et" yazabilirsin.');
       if (response.stepLimit) note('Ajan adım sınırına ulaştı. Tamamlanan işlemler korundu; sürdürmek için "devam et" yaz.');
     } catch (error) {

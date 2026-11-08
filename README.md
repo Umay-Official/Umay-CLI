@@ -8,12 +8,13 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 
 ## Özellikler
 
-- **Sohbet:** Umay Akıllı ve Umay Hızlı modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları.
+- **Sohbet:** Umay Akıllı ve Umay Hızlı modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
 - **Komut menüsü:** `/` yazıp Tab'a basınca komutlar tamamlanır; `/` + Enter tüm menüyü açar.
 - **Yerel araçlar:** Umay klasördeki dosyaları listeler, okur, arar, düzenler; PowerShell ve Python çalıştırır. Yazma ve komutlar her seferinde onay ister. Araçlar [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden gelir.
 - **Belge üretimi:** `/sunum` (.pptx), `/dokuman` (.docx), `/rapor` (.xlsx), `/sema` (Mermaid .html), `/proje` (HTML/CSS/JS + .zip).
 - **Uzmanlar konseyi:** `/konsey` ile yazılımcı, tasarımcı ve pazarlamacı bir konuyu tartışır, moderatör özetler.
 - **Ekler ve GitHub:** `/ekle` ile metin, kod, Word, Excel, PowerPoint dosyası; `/github` ile herkese açık bir depoyu indirip incelettirme.
+- **Kıyaslama:** Gambit Bench v2'nin 39 görevinde Umay Akıllı 87,6 puan aldı. Grafik, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
 - **Kırmızı-beyaz arayüz:** ☾★ logosu, renkli onay kutuları, değişiklik farkları.
 
 ## Gereksinimler
@@ -173,7 +174,7 @@ python/
   bridge.py        Node.js ile JSON satırları üzerinden konuşan köprü
   tools.py         Araçların uygulaması (Gambit AI CLI'den)
 test/              node:test testleri; sahte sunucu kullanır, API harcamaz
-docs/              Ekran görüntüsü ve API gözlemleri
+docs/              Ekran görüntüsü, kıyaslama ve API gözlemleri
 ```
 
 ## Geliştirme

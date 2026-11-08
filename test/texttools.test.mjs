@@ -112,7 +112,7 @@ for (const stream of [false, true]) {
     assert.equal(output.join(''), 'Dosyayı okuyayım.\nGizli kelime MAVI-KAPLUMBAGA-4817.');
     assert.equal(result.text, 'Gizli kelime MAVI-KAPLUMBAGA-4817.');
     assert.deepEqual(result.messages.map(m => m.role), ['assistant', 'user', 'assistant']);
-    if (!stream) assert.equal(result.usage.totalTokens, 30);
+    if (!stream) { assert.equal(result.usage.totalTokens, 30); assert.equal(result.stats.contextTokens, 15, 'size after the last request'); }
   });
 }
 

@@ -108,3 +108,16 @@ export function spinner(label) {
     get running() { return Boolean(timer); },
   };
 }
+
+// "süre 4.2 sn · 312 token · 74 tok/sn"; token parts appear only when the server reports usage.
+// Speed needs streaming: without it the time includes waiting, so it is not shown.
+// Context size is not shown: Umay's prompt_tokens counts only the last message (8 Nov 2026), not the conversation.
+export function formatStats(seconds, usage, stats) {
+  const parts = [`süre ${seconds.toFixed(1)} sn`];
+  const output = usage?.outputTokens;
+  if (Number.isFinite(output)) {
+    parts.push(`${output} token`);
+    if (stats?.streamed && stats.generationMs > 200 && output > 0) parts.push(`${Math.round(output / (stats.generationMs / 1000))} tok/sn`);
+  }
+  return parts.join(' · ');
+}

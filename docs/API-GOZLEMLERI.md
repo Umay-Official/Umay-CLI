@@ -71,6 +71,19 @@ Belge komutları modelden JSON, Markdown, Mermaid veya `DOSYA:` blokları ister;
 
 **Öneri:** Yanıt uzunluk sınırı ve `max_tokens` üst değeri belgelerde yazarsa istemciler uzun çıktıları buna göre bölebilir.
 
+## Token kullanımı ve bağlam uzunluğu
+
+- `GET https://umayzeka.com/v1/models` bir model listesi yerine sitenin ana sayfasını (HTML) döndürüyor; modellerin bağlam uzunluğu API'den öğrenilemiyor ve belgelerde de yazmıyor.
+- Akışlı yanıtlarda token sayısı gelmesi için CLI istekte `stream_options: {"include_usage": true}` gönderiyor (sunucu bu alanı reddederse oturumun geri kalanında göndermiyor). 8 Kasım 2026'daki denemede istek hatasız yanıtlandı ama akışta kullanım bilgisi (`usage`) gelmedi. Akışsız istekte `usage` geldi (ör. 42 çıktı token), ancak sistem mesajı ve önceki konuşma da gönderildiği hâlde `prompt_tokens` yalnızca son kullanıcı mesajını sayıyordu (3 token). Bu yüzden CLI bağlam boyutunu göstermiyor; token/sn de yalnızca akışta doğru ölçülebildiği için şu an görünmüyor.
+
+**Öneri:** `/v1/models` uç noktası (model adları ve `context_length` ile), akışta `usage` desteği ve tüm isteği sayan `prompt_tokens`, istemcilerin bağlam doluluğunu ve hızı göstermesini sağlar.
+
+## Benchmark
+
+8 Kasım 2026'da Umay Akıllı (düşünme açık), Umay CLI ile Gambit Bench v2'nin 39 görevinde koşturuldu: genel puan **87,6** (zor görevlerde 86,5), 21 görev tam puan, toplam 45 dakika. Aynı görevlerde en iyi yerel model Qwen3.8 27B, süre sınırı olmadan 84,3 almıştı (toplam 872 dakika). Kategoriler: hata ayıklama 100, mantık 96, terminal 95, ajan 90, kod okuma 90, SQL 87, kod yazma 85, kod inceleme 77, talimat 51. Grafik ve koşullar: [KIYASLAMA.md](KIYASLAMA.md).
+
+Talimat puanını düşüren tek sıfır, 9 kurallı bir metin görevinde modelin kuralları uzun uzun hesaplarken yanıt uzunluk sınırına ulaşması ve cevap yazamamasıydı (yanıt yalnızca düşünceden oluştu). Düşünme modunda yanıt bütçesinin ne kadarının düşünceye ayrılabileceği belgelenirse istemciler buna göre davranabilir.
+
 ## Site ile API arasındaki fark
 
 Sitedeki `/derin-arastirma` (Vuhuv web araması), `/yt-özetle`, `/mail`, `/nobetci` ve belge üretimi sitenin kendi uç noktalarında (`/api/chat/...`, `/api/guards/...`) ve site oturumuyla çalışıyor; API anahtarıyla erişilemiyor. CLI belge üretimini yerelde yapabildi. Web araması, YouTube ve Gmail için API karşılığı yok.

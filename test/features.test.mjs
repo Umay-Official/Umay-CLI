@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import JSZip from 'jszip';
-import { chat, thinkSplitter } from '../src/client.mjs';
+import { chat, thinkSplitter, friendlyError } from '../src/client.mjs';
 import { markdownStream, styleText } from '../src/markdown.mjs';
 import { generate, parseProject, slugify, extractJson } from '../src/documents.mjs';
 import { loadAttachment, buildUserContent, parseGitHub } from '../src/attachments.mjs';
@@ -207,4 +207,63 @@ test('CLI one-shot generator command writes the file into --cwd', async t => {
   assert.ok((await readdir(dir)).includes('kitap-listesi.xlsx'));
   assert.match(stdout, /kitap-listesi\.xlsx/);
   await access(path.join(dir, 'kitap-listesi.xlsx'));
+});
+
+test('footer shows tokens, and speed for streamed answers, only when the server reports usage', async () => {
+  const { formatStats } = await import('../src/theme.mjs');
+  assert.equal(formatStats(4.24, undefined, { generationMs: 3000 }), 'süre 4.2 sn');
+  assert.equal(formatStats(4.24, { inputTokens: 2900, outputTokens: 222 }, { generationMs: 3000, streamed: true }),
+    'süre 4.2 sn · 222 token · 74 tok/sn');
+  assert.equal(formatStats(2.3, { inputTokens: 3, outputTokens: 42 }, { generationMs: 2300, streamed: false }), 'süre 2.3 sn · 42 token',
+    'without streaming the time includes waiting, so no speed');
+});
+
+test('streamed requests ask for usage and report speed and conversation size', async t => {
+  const { baseURL, bodies } = await server(t, res => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const event = obj => res.write('data: ' + JSON.stringify(obj) + '\n\n');
+    event({ choices: [{ delta: { content: 'Mer' }, finish_reason: null }] });
+    setTimeout(() => {
+      event({ choices: [{ delta: { content: 'haba' }, finish_reason: 'stop' }] });
+      event({ choices: [], usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 } });
+      res.end('data: [DONE]\n\n');
+    }, 30);
+  });
+  const result = await chat({ apiKey: 'k', baseURL, messages: [{ role: 'user', content: 'sa' }] });
+  assert.deepEqual(bodies[0].stream_options, { include_usage: true });
+  assert.equal(result.usage.outputTokens, 20);
+  assert.equal(result.stats.contextTokens, 70);
+  assert.equal(result.stats.streamed, true);
+  assert.ok(result.stats.generationMs >= 20, String(result.stats.generationMs));
+});
+
+// The rejection is remembered for the rest of this process; later tests must not depend on stream_options.
+test('a server that rejects stream_options gets the request again without it', async t => {
+  const { baseURL, bodies } = await server(t, (res, bodies) => {
+    if (bodies.at(-1).stream_options) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Unrecognized field stream_options' } }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'Tamam' }, finish_reason: 'stop' }] }) + '\n\n');
+    res.end('data: [DONE]\n\n');
+  });
+  const first = await chat({ apiKey: 'k', baseURL, messages: [{ role: 'user', content: 'sa' }] });
+  assert.equal(first.text, 'Tamam');
+  assert.deepEqual(bodies.map(body => Boolean(body.stream_options)), [true, false]);
+  await chat({ apiKey: 'k', baseURL, messages: [{ role: 'user', content: 'sa' }] });
+  assert.equal(bodies.length, 3);
+  assert.equal(bodies[2].stream_options, undefined, 'not asked again after a rejection');
+});
+
+test('an empty answer cut at the length limit is explained, not reported as an empty reply', async t => {
+  const { baseURL } = await server(t, res => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: 'uzun uzun düşünüyorum' }, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] }) + '\n\n');
+    res.end('data: [DONE]\n\n');
+  });
+  await assert.rejects(chat({ apiKey: 'k', baseURL, stream: true, messages: [{ role: 'user', content: 'x' }] }),
+    error => /uzunluk sınırına cevap yazamadan/.test(friendlyError(error)));
 });
