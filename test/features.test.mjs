@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile, readFile, readdir, access } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -81,8 +82,12 @@ test('thinking mode adds enable_thinking and shows reasoning_content separately'
   assert.deepEqual(bodies[0].chat_template_kwargs, { enable_thinking: true });
   assert.equal(result.text, 'Merhaba!');
   assert.equal(reasoning.join(''), 'Soruyu inceliyorum.');
+  await chat({ apiKey: 'k', baseURL, thinking: false, messages: [{ role: 'user', content: 'sa' }] });
+  assert.equal(bodies[1].enable_thinking, false, 'thinking off is sent explicitly');
+  assert.deepEqual(bodies[1].chat_template_kwargs, { enable_thinking: false });
   await chat({ apiKey: 'k', baseURL, messages: [{ role: 'user', content: 'sa' }] });
-  assert.equal(bodies[1].enable_thinking, undefined, 'nothing extra is sent when thinking is off');
+  assert.equal(bodies[2].enable_thinking, undefined, 'automatic: the server decides');
+  assert.equal(bodies[2].chat_template_kwargs, undefined);
 });
 
 test('generators build real Office files and repair one malformed reply', async t => {
@@ -266,4 +271,34 @@ test('an empty answer cut at the length limit is explained, not reported as an e
   });
   await assert.rejects(chat({ apiKey: 'k', baseURL, stream: true, messages: [{ role: 'user', content: 'x' }] }),
     error => /uzunluk sınırına cevap yazamadan/.test(friendlyError(error)));
+});
+
+test('a reply that is only reasoning and stops without finish_reason length is explained too', async t => {
+  const { baseURL } = await server(t, res => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '<think>uzun bir plan yapıyorum ve' }, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+    res.end('data: [DONE]\n\n');
+  });
+  await assert.rejects(chat({ apiKey: 'k', baseURL, messages: [{ role: 'user', content: 'x' }] }),
+    error => /uzunluk sınırına cevap yazamadan/.test(friendlyError(error)));
+});
+
+test('CLI thinking setting: flags, old settings files and the default', async t => {
+  const dir = await folder(t);
+  const { baseURL, bodies } = await server(t, res => reply(res, 'Tamam'));
+  const runOnce = (args, settings) => new Promise(resolve => {
+    const file = path.join(dir, `ayar-${bodies.length}.json`);
+    if (settings) writeFileSync(file, JSON.stringify(settings));
+    const child = spawn(process.execPath, ['src/cli.mjs', '--prompt', 'sa', '--no-tools', '--no-stream', '--base-url', baseURL, ...args],
+      { env: { ...process.env, UMAY_API_KEY: 'mock', NO_COLOR: '1', UMAY_SETTINGS: file, UMAY_THINKING: '' } });
+    child.stdout.resume(); child.stderr.resume(); child.stdin.end(); child.on('close', resolve);
+  });
+  await runOnce([]);
+  await runOnce(['--dusunme']);
+  await runOnce(['--dusunme-kapali']);
+  await runOnce([], { thinking: false });
+  await runOnce([], { thinking: true });
+  await runOnce([], { thinkingMode: 'kapalı' });
+  assert.deepEqual(bodies.map(body => body.enable_thinking), [undefined, true, false, undefined, true, false]);
 });

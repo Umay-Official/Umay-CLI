@@ -14,6 +14,7 @@ import { t, color, clean, banner, box, rule, spinner, fileLink, width, formatSta
 import { markdownStream } from './markdown.mjs';
 import { loadAttachment, buildUserContent, importGitHub, UserError } from './attachments.mjs';
 import { GENERATORS, generate } from './documents.mjs';
+import { Memory } from './memory.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const MODELS = { 'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı' };
@@ -33,6 +34,16 @@ function resolveModel(value) {
   return value.trim();
 }
 
+// Thinking: true sends enable_thinking true, false sends false, null sends nothing (the server decides).
+const thinkingName = value => value === true ? 'açık' : value === false ? 'kapalı' : 'otomatik';
+function parseThinking(value) {
+  const name = String(value ?? '').trim().toLocaleLowerCase('tr');
+  if (ON.includes(name) || ['1', 'true'].includes(name)) return true;
+  if (OFF.includes(name) || ['0', 'false'].includes(name)) return false;
+  if (['otomatik', 'oto', 'auto', 'varsayilan', 'varsayılan'].includes(name)) return null;
+  return undefined;
+}
+
 function toggle(arg, current, usage) {
   const value = arg.toLocaleLowerCase('tr');
   if (!value) return !current;
@@ -48,7 +59,7 @@ function loadSettings() {
 async function saveSettings(config) {
   try {
     await mkdir(path.dirname(settingsFile), { recursive: true });
-    await writeFile(settingsFile, JSON.stringify({ model: config.model, thinking: config.thinking, stream: config.stream }, null, 2) + '\n');
+    await writeFile(settingsFile, JSON.stringify({ model: config.model, thinkingMode: thinkingName(config.thinking), stream: config.stream, memory: config.memory }, null, 2) + '\n');
   } catch { /* Preferences are a convenience; failing to save them must not stop the session. */ }
 }
 
@@ -60,12 +71,13 @@ const COMMANDS = [
   { group: 'Sohbet', name: '/gecmis', aliases: ['/history', '/geçmiş'], desc: 'Bu oturumdaki mesajları göster' },
   { group: 'Sohbet', name: '/kaydet', aliases: ['/save'], args: '[dosya.json]', desc: 'Sohbeti kaydet' },
   { group: 'Sohbet', name: '/yukle', aliases: ['/load', '/yükle'], args: '<dosya.json>', desc: 'Kaydedilmiş sohbeti aç' },
+  { group: 'Sohbet', name: '/bellek', aliases: ['/hafiza', '/hafıza', '/memory'], args: '[ekle|sil|temizle|ac|kapat]', desc: 'Kalıcı notlar; her sohbette Umay\'a hatırlatılır' },
   { group: 'Sohbet', name: '/cok-satir', aliases: ['/multi', '/çok-satır'], desc: 'Çok satırlı mesaj yaz' },
   { group: 'Sohbet', name: '/cikis', aliases: ['/exit', '/quit', '/çıkış'], desc: 'Çık' },
   { group: 'Model', name: '/model', aliases: ['/models', '/modeller'], args: '[akilli|hizli]', desc: 'Modeli gör veya değiştir' },
   { group: 'Model', name: '/akilli', aliases: ['/akıllı'], desc: 'Umay Akıllı: daha güçlü yanıtlar' },
   { group: 'Model', name: '/hizli', aliases: ['/hızlı'], desc: 'Umay Hızlı: daha çabuk yanıtlar' },
-  { group: 'Model', name: '/dusunme', aliases: ['/düşünme', '/think'], args: '[ac|kapat]', desc: 'Düşünme modunu aç/kapat' },
+  { group: 'Model', name: '/dusunme', aliases: ['/düşünme', '/think'], args: '[ac|kapat|otomatik]', desc: 'Düşünme: açık, kapalı ya da Umay karar versin' },
   { group: 'Model', name: '/dusunce', aliases: ['/düşünce'], desc: 'Son yanıtın düşüncelerini tam göster' },
   { group: 'Model', name: '/akis', aliases: ['/stream', '/akış'], args: '[ac|kapat]', desc: 'Yanıtı canlı yazdır' },
   { group: 'Model', name: '/anahtar', aliases: ['/key'], desc: 'API anahtarını değiştir' },
@@ -85,8 +97,7 @@ const COMMANDS = [
 const LOOKUP = new Map(COMMANDS.flatMap(command => [command.name, ...command.aliases].map(name => [name, command])));
 const SITE_ONLY = {
   '/derin-arastirma': 'canlı web araması', '/derin-araştırma': 'canlı web araması', '/yt-ozetle': 'YouTube erişimi',
-  '/yt-özetle': 'YouTube erişimi', '/mail': 'Gmail bağlantısı', '/nobetci': 'arka plan nöbetçileri', '/nöbetçi': 'arka plan nöbetçileri',
-  '/nobetci-sil': 'arka plan nöbetçileri', '/takip': 'arka plan nöbetçileri',
+  '/yt-özetle': 'YouTube erişimi', '/mail': 'Gmail bağlantısı',
 };
 
 function help() {
@@ -103,7 +114,7 @@ function help() {
     `    ${t.white('Tab')}                       Komutu veya dosya yolunu tamamla`,
     `    ${t.white('/')} + Enter                 Komut menüsünü aç`,
     `    ${t.white('Ctrl+C')}                    Yanıtı durdur; boş satırda çıkış`,
-    '', `  ${t.dim('Sitedeki /derin-arastirma, /yt-özetle, /mail ve /nobetci Umay sunucusunda çalışır; API ile kullanılamaz.')}`, '');
+    '', `  ${t.dim('Sitedeki /derin-arastirma, /yt-özetle ve /mail Umay sunucusunda çalışır; API ile kullanılamaz.')}`, '');
   console.log(lines.join('\n'));
 }
 
@@ -112,12 +123,12 @@ function usage() {
   ${t.redBold('Kullanım')}
     umay                              Sohbeti başlat
     umay --hizli                      Umay Hızlı ile başlat
-    umay --dusunme                    Düşünme modu açık başlat
+    umay --dusunme                    Düşünme açık başlat (--dusunme-kapali: kapalı)
     umay --prompt "soru"              Tek soru sor ve çık
     umay --prompt "/sunum konu"       Tek komutla belge üret
 
   ${t.redBold('Seçenekler')}
-    --model <ad>, --hizli, --dusunme, --no-stream, --no-tools, --tool-mode text|native,
+    --model <ad>, --hizli, --dusunme, --dusunme-kapali, --no-stream, --no-tools, --tool-mode text|native,
     --cwd <klasör>, --system <metin>, --timeout <sn>, --max-steps <n>, --yes, --base-url <url>
 
   ${t.redBold('Ortam')}
@@ -138,9 +149,11 @@ function completer(line) {
   const arg = line.slice(space + 1);
   const pick = options => [options.filter(option => option.startsWith(arg)), arg];
   if (command === '/model') return pick(['akilli', 'hizli']);
-  if (['/dusunme', '/akis', '/oto'].includes(command)) return pick(['ac', 'kapat']);
+  if (command === '/dusunme') return pick(['ac', 'kapat', 'otomatik']);
+  if (['/akis', '/oto'].includes(command)) return pick(['ac', 'kapat']);
   if (command === '/araclar') return pick(['ac', 'kapat', 'text', 'native']);
   if (command === '/ekler') return pick(['temizle']);
+  if (command === '/bellek') return pick(['ekle ', 'sil ', 'temizle', 'ac', 'kapat']);
   if (['/ekle', '/cd', '/yukle', '/kaydet'].includes(command)) return [completePath(arg, command === '/cd'), arg];
   return [[], line];
 }
@@ -218,7 +231,7 @@ async function main() {
   if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.env'));
   const { values } = parseArgs({ options: {
     help: { type: 'boolean', short: 'h' }, model: { type: 'string' }, hizli: { type: 'boolean', default: false },
-    dusunme: { type: 'boolean', default: false },
+    dusunme: { type: 'boolean', default: false }, 'dusunme-kapali': { type: 'boolean', default: false },
     'base-url': { type: 'string' }, timeout: { type: 'string', default: '120' },
     prompt: { type: 'string', short: 'p' }, system: { type: 'string' },
     'no-stream': { type: 'boolean', default: false },
@@ -233,10 +246,14 @@ async function main() {
     baseURL: validateBaseURL(values['base-url'] ?? process.env.UMAY_BASE_URL ?? DEFAULT_BASE_URL),
     timeout: Number(values.timeout) * 1000,
     stream: !values['no-stream'] && saved.stream !== false,
-    thinking: values.dusunme || ['1', 'true', 'on'].includes(process.env.UMAY_THINKING ?? '') || saved.thinking === true,
+    // Older settings files stored thinking: true/false, where false meant "send nothing" (now: otomatik).
+    thinking: values.dusunme ? true : values['dusunme-kapali'] ? false
+      : parseThinking(process.env.UMAY_THINKING)
+        ?? (saved.thinkingMode !== undefined ? parseThinking(saved.thinkingMode) ?? null : saved.thinking === true ? true : null),
     apiKey: process.env.UMAY_API_KEY?.trim(),
     maxSteps: Number(values['max-steps']),
     toolMode: values['tool-mode'] ?? process.env.UMAY_TOOL_MODE ?? 'text',
+    memory: saved.memory !== false,
   };
   if (!['text', 'native'].includes(config.toolMode)) throw new Error('--tool-mode text veya native olmalı.');
   if (!Number.isFinite(config.timeout) || config.timeout < 1000 || config.timeout > 3_600_000) {
@@ -255,6 +272,9 @@ async function main() {
   let attachments = [];
   let lastFiles = [];
   let lastThought = '';
+  const memory = new Memory(path.join(path.dirname(settingsFile), 'bellek.md')).load();
+  // Notes are added to every request (chat, generators, council) but not stored in the conversation history.
+  const remember = list => memory.apply(list, config.memory);
   // The model does not know the current date; documents and answers need it.
   const todayText = new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const system = values.system ?? `Sen Umay'sın: Türkiye'nin bağımsız yapay zeka asistanı. Kullanıcının dilinde açık, doğru ve anlaşılır yanıtlar ver; uygun olduğunda Markdown başlıkları, maddeler ve tablolar kullan. Bugünün tarihi: ${todayText}.`;
@@ -264,9 +284,9 @@ async function main() {
   function createView(title = 'Umay') {
     const interactive = color;
     if (process.stdout.isTTY && title) {
-      console.log(`\n  ${t.red('☾★')} ${t.white(title)} ${t.dim(`· ${modelName(config.model)}${config.thinking ? ' · düşünme açık' : ''}`)}`);
+      console.log(`\n  ${t.red('☾★')} ${t.white(title)} ${t.dim(`· ${modelName(config.model)}${config.thinking === null ? '' : ` · düşünme ${thinkingName(config.thinking)}`}`)}`);
     }
-    let spin = interactive ? spinner(config.thinking ? 'düşünüyor' : 'yanıt bekleniyor') : null;
+    let spin = interactive ? spinner(config.thinking === true ? 'düşünüyor' : 'yanıt bekleniyor') : null;
     let ended = true;
     const md = markdownStream(text => { if (!text) return; process.stdout.write(text); ended = text.endsWith('\n'); });
     let state = 'wait';
@@ -361,7 +381,7 @@ async function main() {
     view = createView();
     const start = Date.now();
     try {
-      const response = await chat({ ...config, runtime: toolsOn ? runtime : undefined, messages: pending, signal: active.signal,
+      const response = await chat({ ...config, runtime: toolsOn ? runtime : undefined, messages: remember(pending), signal: active.signal,
         onText: view.text, onReasoning: view.reasoning });
       view.finish();
       messages = [...pending, ...response.messages];
@@ -389,7 +409,7 @@ async function main() {
     const start = Date.now();
     const askModel = async (list, generator) => {
       let size = 0;
-      const result = await chat({ ...config, timeout: Math.max(config.timeout, 600_000), runtime: undefined, messages: list,
+      const result = await chat({ ...config, timeout: Math.max(config.timeout, 600_000), runtime: undefined, messages: remember(list),
         thinking: generator?.noThinking ? false : config.thinking, signal: active.signal,
         onText: text => { size += text.length; spin.update(`${gen.label} yazılıyor · ${(size / 1024).toFixed(1)} KB`); },
         onReasoning: () => spin.update(`${gen.label} için düşünüyor`) });
@@ -432,7 +452,7 @@ async function main() {
       view = createView(title);
       try {
         const result = await chat({ ...config, runtime: undefined, signal: active.signal,
-          messages: [{ role: 'system', content: systemText }, { role: 'user', content: userText }],
+          messages: remember([{ role: 'system', content: systemText }, { role: 'user', content: userText }]),
           onText: view.text, onReasoning: view.reasoning });
         view.finish();
         return result.text;
@@ -459,7 +479,8 @@ async function main() {
   // Returns text to send as a chat message, or undefined when the command is complete.
   async function runCommand(input) {
     const split = input.indexOf(' ');
-    const typed = (split < 0 ? input : input.slice(0, split)).toLowerCase();
+    // Trailing punctuation typed by habit ("/cikis," or "/yardim?") is not part of the command name.
+    const typed = (split < 0 ? input : input.slice(0, split)).toLowerCase().replace(/(?<=.)[.,;:!?]+$/, '');
     const arg = split < 0 ? '' : input.slice(split + 1).trim();
     if (typed === '/') { help(); return; }
     if (SITE_ONLY[typed]) {
@@ -479,6 +500,39 @@ async function main() {
     switch (command.name) {
       case '/yardim': help(); return;
       case '/cikis': return { exit: true };
+      case '/bellek': {
+        const space = arg.indexOf(' ');
+        const action = (space < 0 ? arg : arg.slice(0, space)).toLocaleLowerCase('tr');
+        const rest = space < 0 ? '' : arg.slice(space + 1).trim();
+        if (action === 'ekle') {
+          if (!rest) throw new UserError('Kullanım: /bellek ekle Python projelerimde tip ipuçları kullanırım');
+          ok(await memory.add(rest) ? `Not eklendi (${memory.items.length}).` : 'Bu not zaten var.');
+          if (!config.memory) note('Bellek kapalı; notların gönderilmesi için /bellek ac');
+          return;
+        }
+        if (action === 'sil') {
+          const removed = await memory.remove(rest);
+          ok(`Silindi: ${clean(removed)}`); return;
+        }
+        if (action === 'temizle') {
+          if (!memory.items.length) { note('Bellek zaten boş.'); return; }
+          const answer = (await ask(rl, `  ${t.yellow('?')} ${memory.items.length} notun hepsi silinsin mi? ${t.dim('[e/h]')} ${t.red('❯')} `) ?? '').trim().toLocaleLowerCase('tr');
+          if (!['e', 'evet'].includes(answer)) { note('Vazgeçildi.'); return; }
+          await memory.clear(); ok('Bellek temizlendi.'); return;
+        }
+        if (ON.includes(action) || OFF.includes(action)) {
+          config.memory = ON.includes(action);
+          await saveSettings(config);
+          ok(`Bellek ${config.memory ? 'açık: notlar her istekte Umay\'a gönderilir' : 'kapalı: notlar saklanır ama gönderilmez'}.`);
+          return;
+        }
+        if (action) throw new UserError('Kullanım: /bellek, /bellek ekle <not>, /bellek sil <no>, /bellek temizle, /bellek ac|kapat');
+        console.log(`  ${t.white('Bellek:')} ${config.memory ? t.green('açık') : 'kapalı'} ${t.dim(`· ${memory.file}`)}`);
+        if (!memory.items.length) note('Henüz not yok. Örnek: /bellek ekle Adım Eray, dilekçelerde bu adı kullan');
+        memory.items.forEach((item, i) => console.log(`  ${t.red(`${i + 1}.`)} ${clean(item)}`));
+        if (memory.items.length) note('Notlar her istekte Umay API\'ye gönderilir; dosyayı elle de düzenleyebilirsin.');
+        return;
+      }
       case '/yeni':
         messages = [{ role: 'system', content: system }]; attachments = [];
         ok('Yeni sohbet başladı.'); return;
@@ -537,11 +591,21 @@ async function main() {
         await saveSettings(config);
         ok(`Model: ${t.redBold(modelName(config.model))}`); return;
       case '/dusunme':
-        config.thinking = toggle(arg, config.thinking, '/dusunme');
+      {
+        if (!arg) {
+          console.log(`  ${t.white('Düşünme:')} ${t.redBold(thinkingName(config.thinking))}`);
+          note('/dusunme ac: en iyi sonuç, biraz yavaş · /dusunme otomatik: Umay karar verir · /dusunme kapat: hızlı ama zayıf');
+          return;
+        }
+        const next = parseThinking(arg);
+        if (next === undefined) throw new UserError('Kullanım: /dusunme ac | kapat | otomatik');
+        config.thinking = next;
         await saveSettings(config);
-        ok(`Düşünme modu ${config.thinking ? t.white('açık') : 'kapalı'}.`);
-        if (config.thinking) note('Model yanıttan önce düşünür; düşünce tek satırda özetlenir, tamamı için /dusunce. Yanıtlar biraz daha geç gelir.');
+        ok(`Düşünme: ${t.white(thinkingName(config.thinking))}.`);
+        if (next === true) note('Model yanıttan önce düşünür; düşünce tek satırda özetlenir, tamamı için /dusunce.');
+        if (next === false) note('Düşünme kapalıyken yanıtlar daha hızlı ama zor görevlerde belirgin şekilde daha zayıf.');
         return;
+      }
       case '/akis':
         config.stream = toggle(arg, config.stream, '/akis');
         await saveSettings(config);
@@ -653,7 +717,7 @@ ${rule('Son düşünce')}`);
       }
       view = createView(null);
       const result = await chat({ ...config, runtime: toolsOn ? runtime : undefined,
-        messages: [...messages, { role: 'user', content: prompt }], signal: abort.signal,
+        messages: remember([...messages, { role: 'user', content: prompt }]), signal: abort.signal,
         onText: view.text, onReasoning: view.reasoning });
       view.finish();
       if (result.stepLimit) { showError('Ajan adım sınırına ulaştı. Yapılan işlemler korunuyor; devam etmek için sınırı artır.'); process.exitCode = 1; }
@@ -668,7 +732,7 @@ ${rule('Son düşünce')}`);
   // ----- Interactive mode -----
   console.log(banner());
   const chip = (label, value, on = true) => on ? t.softBadge(`${label} ${value}`) : t.dim(` ${label} ${value} `);
-  console.log(`  ${chip('◆', modelName(config.model))} ${chip('düşünme', config.thinking ? 'açık' : 'kapalı', config.thinking)} ${chip('araçlar', toolsOn ? 'açık' : 'kapalı', toolsOn)}  ${t.dim(currentDir)}`);
+  console.log(`  ${chip('◆', modelName(config.model))} ${chip('düşünme', thinkingName(config.thinking), config.thinking === true)} ${chip('araçlar', toolsOn ? 'açık' : 'kapalı', toolsOn)}${memory.items.length ? ` ${chip('bellek', config.memory ? `${memory.items.length} not` : 'kapalı', config.memory)}` : ''}  ${t.dim(currentDir)}`);
   console.log(`  ${t.dim('İpucu:')} ${t.white('/')} ${t.dim('yaz + Tab → komutlar  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim')}\n`);
   if (!config.apiKey) {
     note('Anahtar: umayzeka.com → Geliştirici & API Paneli → Yeni Anahtar Oluştur');

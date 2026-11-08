@@ -10,7 +10,7 @@ Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Den
 | Modeller | ✅ | `umay-akilli`, `umay-hizli` |
 | Düşünme modu | ✅ Çalışıyor | `enable_thinking` ile `reasoning_content` geliyor |
 | Yerleşik araç çağrısı (`tools`) | ❌ Kullanılmıyor | Model `tool_calls` döndürmüyor; CLI metin protokolüyle çözdü |
-| Görseller | ❌ İşlenmiyor | İstek hata vermiyor ama model görseli görmüyor |
+| Görseller | ❌ İşlenmiyor | İstek hata vermiyor ama Akıllı da Hızlı da görseli görmüyor |
 | Yapılandırılmış çıktı (JSON, Markdown) | ✅ Güvenilir | Belge komutları çoğunlukla ilk denemede doğru biçimde |
 
 ## Uç nokta ve kimlik doğrulama
@@ -40,10 +40,11 @@ read_file(path="test.txt")
 
 ## Düşünme modu
 
-Site kendi sunucusuna `enable_thinking` gönderiyor. CLI, düşünme açıkken API isteğine hem `enable_thinking: true` hem de `chat_template_kwargs: {"enable_thinking": true}` ekledi. Sonuç:
+Site kendi sunucusuna `enable_thinking` gönderiyor. CLI, düşünme açıkken API isteğine hem `enable_thinking: true` hem de `chat_template_kwargs: {"enable_thinking": true}` ekledi; kapalıyken ilk koşularda hiçbir alan göndermedi, sonra aynı alanları `false` olarak göndermeye başladı. Sonuç:
 
 - Düşünceler akışta `reasoning_content` alanında geldi, yanıt metninden ayrı. İki alandan hangisinin etkili olduğu ayrıca denenmedi.
-- Düşünme kapalıyken (ek alan gönderilmeden) düşünce gelmedi.
+- Alan gönderilmediğinde Umay kendi karar veriyor: kısa sohbette düşünce gelmedi, ama benchmark'ta uzun görevlerde düşündüğü görüldü (sonuçlar "açık"a yakın, uzun planlar ve kesilmeler aynı).
+- `enable_thinking: false` düşünceyi gerçekten kapatıyor: kesilmeler bitti, ama benchmark puanı Akıllı'da 22, Hızlı'da 13 puan düştü.
 - Düşünceler İngilizce, yanıtlar Türkçe geliyor.
 
 **Öneri:** Hangi alanın desteklendiği API belgelerinde yazarsa istemciler doğru alanı gönderebilir. Düşüncelerin de Türkçe olması Türkçe kullanıcılar için daha anlaşılır olur.
@@ -51,6 +52,8 @@ Site kendi sunucusuna `enable_thinking` gönderiyor. CLI, düşünme açıkken A
 ## Görseller
 
 Bir `.jpg` görsel, OpenAI biçiminde görsel parçası olarak (`image_url`, base64 veri adresi) gönderildi. İstek `200` döndü ama model görseli görmedi; önceki konuşmadaki bir şemayı anlatmaya başladı. Sonraki denemede görseli tanıyamadığını kendisi söyledi.
+
+Site güncellemesinden sonra (tanıtımda artık "görsel/video algılama" yazıyor) aynı gün tekrar denendi: üzerinde "KARPUZ 4817" yazan, yeşil daire ve sarı üçgen içeren bir PNG, yeni sohbetlerde önce Umay Akıllı'ya, sonra Umay Hızlı'ya gönderildi. İki model de görseli görmediğini söyledi ("Mesajınızda herhangi bir görsel eklenmemiş", "Görseli paylaşmamışsınız"). Giden isteğin görseli standart biçimde (`image_url`, `data:image/png;base64,...`) taşıdığı istemci tarafında doğrulandı; yani görsel API'de iki modele de ulaşmıyor; sitedeki görsel desteği yalnızca sitenin kendi yükleme uç noktası (`/api/chat/upload`) üzerinden çalışıyor gibi görünüyor.
 
 **Öneri:** Görsel desteği API'de yoksa, isteği `400` ve açıklayıcı bir mesajla reddetmek istemcilerin durumu kullanıcıya doğru anlatmasını sağlar. Destek eklenirse CLI'de `UMAY_IMAGES=1` ile açılabilir.
 
@@ -80,12 +83,18 @@ Belge komutları modelden JSON, Markdown, Mermaid veya `DOSYA:` blokları ister;
 
 ## Benchmark
 
-8 Kasım 2026'da Umay Akıllı (düşünme açık), Umay CLI ile Gambit Bench v2'nin 39 görevinde koşturuldu: genel puan **87,6** (zor görevlerde 86,5), 21 görev tam puan, toplam 45 dakika. Aynı görevlerde en iyi yerel model Qwen3.8 27B, süre sınırı olmadan 84,3 almıştı (toplam 872 dakika). Kategoriler: hata ayıklama 100, mantık 96, terminal 95, ajan 90, kod okuma 90, SQL 87, kod yazma 85, kod inceleme 77, talimat 51. Grafik ve koşullar: [KIYASLAMA.md](KIYASLAMA.md).
+8 Kasım 2026'da Umay Akıllı (düşünme açık), Umay CLI ile Gambit Bench v2'nin 39 görevinde koşturuldu: genel puan **87,6** (zor görevlerde 86,5), 21 görev tam puan, toplam 45 dakika. Aynı görevlerde en iyi yerel model Qwen3.8 27B, süre sınırı olmadan 84,3 almıştı (toplam 872 dakika). Akıllı düşünme açık kategorileri: hata ayıklama 100, mantık 96, terminal 95, ajan 90, kod okuma 90, SQL 87, kod yazma 85, kod inceleme 77, talimat 51. Grafik ve koşullar: [KIYASLAMA.md](KIYASLAMA.md).
 
-Talimat puanını düşüren tek sıfır, 9 kurallı bir metin görevinde modelin kuralları uzun uzun hesaplarken yanıt uzunluk sınırına ulaşması ve cevap yazamamasıydı (yanıt yalnızca düşünceden oluştu). Düşünme modunda yanıt bütçesinin ne kadarının düşünceye ayrılabileceği belgelenirse istemciler buna göre davranabilir.
+Aynı gün Akıllı alan gönderilmeden (otomatik) 83,2 ve `enable_thinking: false` ile 65,2; Hızlı düşünme açıkla 81,4, otomatikte 79,4 ve kapalıyla 68,7 aldı.
+
+**Yanıt uzunluk sınırı:** Bu koşulardaki 13 sıfırın hepsinde yanıt cevaba ya da araç çağrısına gelmeden kesildi. Umay Hızlı'da yanıt her seferinde yaklaşık 26–33 bin karakterde (yaklaşık 8 bin token), Umay Akıllı'da 9–13 bin karakterde bitti. Hızlı, düşünme açıkken ve alan gönderilmediğinde cevaptan önce uzun plan yazıyor; bu yüzden uzun kod isteyen görevlerde hiç cevap veremedi. `enable_thinking: false` ile 78 görevde hiç kesilme olmadı. Kesilen yanıtlarda `finish_reason` `length` değildi, yani istemci yanıtın kesildiğini anlayamıyor. **Öneri:** Yanıt sınırının belgelenmesi ya da düşünce için ayrı bir bütçe ayrılması, kesilen yanıtlarda `finish_reason: "length"` dönmesi ve alan gönderilmediğinde düşünmenin açık mı kapalı mı olduğunun belgelenmesi.
+
+Akıllı'nın düşünme açıkken aldığı tek sıfır, 9 kurallı bir metin görevinde modelin kuralları uzun uzun hesaplarken yanıt uzunluk sınırına ulaşması ve cevap yazamamasıydı (yanıt yalnızca düşünceden oluştu). Düşünme modunda yanıt bütçesinin ne kadarının düşünceye ayrılabileceği belgelenirse istemciler buna göre davranabilir.
 
 ## Site ile API arasındaki fark
 
-Sitedeki `/derin-arastirma` (Vuhuv web araması), `/yt-özetle`, `/mail`, `/nobetci` ve belge üretimi sitenin kendi uç noktalarında (`/api/chat/...`, `/api/guards/...`) ve site oturumuyla çalışıyor; API anahtarıyla erişilemiyor. CLI belge üretimini yerelde yapabildi. Web araması, YouTube ve Gmail için API karşılığı yok.
+Sitedeki `/derin-arastirma` (Vuhuv web araması), `/yt-özetle`, `/mail`, belge üretimi ve bellek sitenin kendi uç noktalarında (`/api/chat/...`, `/api/integrations/gmail/...`, `/api/memory/...`) ve site oturumuyla çalışıyor; API anahtarıyla erişilemiyor. CLI belge üretimini yerelde yapabildi. Web araması, YouTube, Gmail ve bellek için API karşılığı yok.
+
+Site 8 Kasım 2026'dan sonra güncellendi (betik sürümü 29 → 34): arka plan nöbetçileri (`/nobetci`, `/nobetci-sil`, `/takip` ve `/api/guards/...`) kaldırıldı; bellek (`/api/memory/...`), "Krallıklar & Liderlik" (`/api/leaderboards`) ve sohbet isteğine dil alanı (`language`) eklendi. Geliştirici panelindeki API örnekleri değişmedi.
 
 **Öneri:** Web araması için bir API seçeneği (örneğin istekte bir bayrak) eklenirse, istemciler de güncel bilgiyle yanıt verebilir.

@@ -66,15 +66,17 @@ export async function chat(options) {
 
 async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MODEL,
   messages, stream = true, timeout = 120_000, signal, onText = () => {},
-  runtime, maxSteps = 25, toolMode = 'native', thinking = false, onReasoning = () => {}, includeUsage = false }) {
+  runtime, maxSteps = 25, toolMode = 'native', thinking = null, onReasoning = () => {}, includeUsage = false }) {
   baseURL = validateBaseURL(baseURL);
   if (!apiKey?.trim()) throw new Error('API anahtarı gerekli.');
   const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
   const provider = createOpenAICompatible({
     name: 'umay', baseURL, apiKey, includeUsage,
-    // The website sends enable_thinking; Qwen-style servers read chat_template_kwargs. Sent only when on.
-    transformRequestBody: body => thinking
-      ? { ...body, enable_thinking: true, chat_template_kwargs: { enable_thinking: true } } : body,
+    // thinking: true/false is sent as enable_thinking (the website's field) and chat_template_kwargs (Qwen-style
+    // servers); null sends neither and the server decides. Umay reasons by default; false really turns it off,
+    // which avoids cut-off replies but lowered benchmark scores by 11–18 points (8 Nov 2026).
+    transformRequestBody: body => typeof thinking === 'boolean'
+      ? { ...body, enable_thinking: thinking, chat_template_kwargs: { enable_thinking: thinking } } : body,
     // Do not forward credentials to a redirect or show an HTML page as an AI answer.
     fetch: async (url, init) => {
       const response = await fetch(url, { ...init, redirect: 'manual' });
@@ -112,13 +114,15 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
   const runStep = async (history, show) => {
     const call = { messages: history, abortSignal: requestSignal };
     // Reasoning may arrive as reasoning_content or inside <think> tags; neither is part of the answer.
-    const split = thinkSplitter(show, onReasoning);
+    let thought = 0;
+    const think = text => { thought += text.length; onReasoning(text); };
+    const split = thinkSplitter(show, think);
     const begin = performance.now();
     if (!stream) {
       const result = await agent.generate(call);
-      if (result.reasoningText) onReasoning(result.reasoningText);
+      if (result.reasoningText) think(result.reasoningText);
       split.push(result.text);
-      return { result, text: split.end(), ms: performance.now() - begin };
+      return { result, text: split.end(), ms: performance.now() - begin, thought };
     }
     // Reading fullStream ensures errors after partial output are surfaced as errors.
     const result = await agent.stream(call);
@@ -129,7 +133,7 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
       if (part.type === 'error') throw part.error;
       if (part.type === 'abort') throw requestSignal.reason ?? new DOMException('Aborted', 'AbortError');
       if (part.type === 'text-delta') { first ??= performance.now(); split.push(part.text); }
-      if (part.type === 'reasoning-delta') { first ??= performance.now(); onReasoning(part.text); }
+      if (part.type === 'reasoning-delta') { first ??= performance.now(); think(part.text); }
       if (part.type === 'finish-step') {
         if (part.finishReason === 'error') throw new ResponseError('Yanıt akışı sunucu hatasıyla kesildi.');
         finished = true;
@@ -137,7 +141,7 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
     }
     requestSignal.throwIfAborted();
     if (!finished) throw new ResponseError('API yanıtı tamamlanmadan kesildi.');
-    return { result, text: split.end(), ms: performance.now() - (first ?? begin) };
+    return { result, text: split.end(), ms: performance.now() - (first ?? begin), thought };
   };
   try {
     if (textMode) {
@@ -145,11 +149,11 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
         onToolStart: () => { sideEffects = true; } });
       return { ...result, stats: { ...result.stats, streamed: stream } };
     }
-    const { result, text, ms } = await runStep(conversation, onText);
+    const { result, text, ms, thought } = await runStep(conversation, onText);
     const history = await result.responseMessages;
     const finishReason = await result.finishReason;
     const stepLimit = finishReason === 'tool-calls';
-    if (!text.trim() && !stepLimit) throw emptyAnswer(finishReason);
+    if (!text.trim() && !stepLimit) throw emptyAnswer(finishReason, thought);
     const usage = await result.usage;
     return { text, usage, finishReason, messages: history, stepLimit, stats: { ...stepStats(usage, ms), streamed: stream } };
   } catch (error) {
@@ -159,9 +163,10 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
   }
 }
 
-// An empty answer after the length limit means the reply budget ran out (usually while thinking).
-function emptyAnswer(finishReason) {
-  return new ResponseError(finishReason === 'length'
+// No answer text: either the length limit was hit, or the reply was all reasoning and stopped before the answer.
+// Umay ends such replies without finish_reason "length" (8 Nov 2026), so reasoning without an answer counts too.
+function emptyAnswer(finishReason, thought = 0) {
+  return new ResponseError(finishReason === 'length' || thought > 0
     ? 'Model yanıt uzunluk sınırına cevap yazamadan ulaştı (çoğunlukla düşünürken). /dusunme kapat ile veya isteği bölerek tekrar dene.'
     : 'API boş bir yanıt döndürdü.');
 }
@@ -210,7 +215,7 @@ async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, 
   let stats = { generationMs: 0 };
   for (let step = 1; ; step++) {
     const filter = visibleFilter(onText);
-    const { result, text, ms } = await runStep([...conversation, ...history], delta => filter.push(delta));
+    const { result, text, ms, thought } = await runStep([...conversation, ...history], delta => filter.push(delta));
     filter.flush();
     const stepUsage = await result.usage;
     stats = stepStats(stepUsage, ms, stats);
@@ -219,7 +224,7 @@ async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, 
     }
     const parsed = parseToolCalls(text);
     if (!parsed) {
-      if (!text.trim()) throw emptyAnswer(await result.finishReason);
+      if (!text.trim()) throw emptyAnswer(await result.finishReason, thought);
       history.push({ role: 'assistant', content: text });
       return { text, usage, finishReason: await result.finishReason, messages: history, stepLimit: false, stats };
     }

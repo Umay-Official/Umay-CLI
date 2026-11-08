@@ -13,8 +13,9 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 - **Yerel araçlar:** Umay klasördeki dosyaları listeler, okur, arar, düzenler; PowerShell ve Python çalıştırır. Yazma ve komutlar her seferinde onay ister. Araçlar [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden gelir.
 - **Belge üretimi:** `/sunum` (.pptx), `/dokuman` (.docx), `/rapor` (.xlsx), `/sema` (Mermaid .html), `/proje` (HTML/CSS/JS + .zip).
 - **Uzmanlar konseyi:** `/konsey` ile yazılımcı, tasarımcı ve pazarlamacı bir konuyu tartışır, moderatör özetler.
+- **Bellek:** `/bellek ekle` ile kaydedilen notlar her sohbette Umay'a hatırlatılır; notlar bilgisayarında düz metin dosyada durur.
 - **Ekler ve GitHub:** `/ekle` ile metin, kod, Word, Excel, PowerPoint dosyası; `/github` ile herkese açık bir depoyu indirip incelettirme.
-- **Kıyaslama:** Gambit Bench v2'nin 39 görevinde Umay Akıllı 87,6 puan aldı. Grafik, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
+- **Kıyaslama:** Gambit Bench v2'nin 39 görevinde Umay Akıllı (düşünme açık) 87,6, Umay Hızlı 81,4 puan aldı. Grafikler, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
 - **Kırmızı-beyaz arayüz:** ☾★ logosu, renkli onay kutuları, değişiklik farkları.
 
 ## Gereksinimler
@@ -67,10 +68,11 @@ Bu klasördeki dosyaları listele
 | Sohbet | `/yeni` | Yeni sohbet |
 | | `/gecmis` | Oturumdaki mesajlar |
 | | `/kaydet [dosya.json]`, `/yukle <dosya.json>` | Sohbeti kaydet / aç (var olan dosyanın üzerine yazmaz) |
+| | `/bellek`, `/bellek ekle <not>`, `/bellek sil <no>` | Kalıcı notlar: her sohbette Umay'a hatırlatılır (`temizle`, `ac`, `kapat`) |
 | | `/cok-satir` | Çok satırlı mesaj; `/gonder` gönderir, `/iptal` vazgeçer |
 | | `/cikis` | Çık (Ctrl+D veya boş satırda Ctrl+C da çıkar) |
 | Model | `/akilli`, `/hizli`, `/model [akilli\|hizli]` | Umay Akıllı (güçlü) veya Umay Hızlı (çabuk) |
-| | `/dusunme [ac\|kapat]` | Düşünme modu; düşünce tek satırda akar, sonra özetlenir |
+| | `/dusunme [ac\|kapat\|otomatik]` | Düşünme: açık en iyi sonucu verir, kapalı hızlıdır, otomatikte Umay karar verir (varsayılan) |
 | | `/dusunce` | Son yanıtın düşüncesini tam göster |
 | | `/akis [ac\|kapat]` | Canlı yazım akışı |
 | | `/anahtar` | API anahtarını değiştir |
@@ -108,7 +110,21 @@ Umay sitesinde bu komutlar Umay'ın sunucusunda çalışır; API anahtarı ise y
 
 ### Sitede olup CLI'de olmayanlar
 
-`/derin-arastirma`, `/yt-özetle`, `/mail` ve `/nobetci` Umay sitesinin kendi sunucusunda ve site oturumuyla çalışır; API anahtarıyla erişilemez. Bu komutlar yazılınca CLI nedenini açıklar.
+`/derin-arastirma` (canlı web araması), `/yt-özetle` ve `/mail` Umay sitesinin kendi sunucusunda ve site oturumuyla çalışır; API anahtarıyla erişilemez. Bu komutlar yazılınca CLI nedenini açıklar. Sitedeki bellek de site hesabına bağlıdır ve API'den kullanılamaz; CLI'nin kendi belleği için [Bellek](#bellek) bölümüne bak.
+
+## Bellek
+
+`/bellek ekle <not>` ile Umay'ın her sohbette bilmesini istediğin şeyleri kaydedersin: adın, kullandığın diller, yazım tercihlerin gibi. Notlar her istekte (sohbet, belge komutları, konsey) sistem mesajı olarak Umay'a gönderilir; sohbet geçmişine eklenmez, `/yeni` sonrası da geçerlidir.
+
+```text
+/bellek ekle Adım Eray, dilekçelerde bu adı kullan
+/bellek ekle Kod örneklerinde Python 3.12 ve tip ipuçları kullan
+/bellek            notları listeler
+/bellek sil 2      2 numaralı notu siler
+/bellek kapat      notları saklar ama göndermez
+```
+
+Notlar `~/.umay/bellek.md` dosyasında düz metin olarak durur; her `- ` ile başlayan satır bir nottur ve dosyayı elle de düzenleyebilirsin. Her istekte en fazla 4.000 karakterlik not gönderilir (fazlası varsa en yeniler). Notlar Umay API'ye gönderildiği için şifre veya kimlik numarası gibi gizli bilgileri belleğe yazma.
 
 ## Yerel araçlar ve güvenlik
 
@@ -142,7 +158,7 @@ umay --prompt "/rapor kitap listesi" --cwd C:\raporlar
 
 Yanıt standart çıktıya, araç ilerlemesi hata çıktısına yazılır; hata olursa çıkış kodu 1'dir. Bu modda yazma ve komutlar reddedilir, `--yes` ile açıkça izin verilir.
 
-Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--no-stream`, `--no-tools`, `--tool-mode text|native`, `--cwd <klasör>`, `--system <metin>`, `--timeout <sn>`, `--max-steps <n>`, `--yes`, `--base-url <url>`.
+Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-stream`, `--no-tools`, `--tool-mode text|native`, `--cwd <klasör>`, `--system <metin>`, `--timeout <sn>`, `--max-steps <n>`, `--yes`, `--base-url <url>`.
 
 ## Ortam değişkenleri
 
@@ -150,7 +166,7 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--no-stream`, `--no-tools`
 | --- | --- |
 | `UMAY_API_KEY` | API anahtarı |
 | `UMAY_MODEL` | `umay-akilli` (varsayılan) veya `umay-hizli` |
-| `UMAY_THINKING` | `1` ise düşünme modu açık başlar |
+| `UMAY_THINKING` | `ac`, `kapat` veya `otomatik` (varsayılan otomatik) |
 | `UMAY_BASE_URL` | API adresi (varsayılan `https://umayzeka.com/v1`; HTTPS zorunlu, yalnızca localhost için HTTP) |
 | `UMAY_PYTHON` | Python PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |
 | `UMAY_TOOL_MODE` | `text` (varsayılan) veya yerleşik araç çağrısı destekleyen sunucular için `native` |
@@ -168,6 +184,7 @@ src/
   tools.mjs        Python araç köprüsüyle iletişim, onaylar
   documents.mjs    /sunum /dokuman /rapor /sema /proje üreticileri
   attachments.mjs  /ekle ve /github
+  memory.mjs       /bellek: kalıcı notlar
   markdown.mjs     Terminalde akan Markdown görünümü
   theme.mjs        Renkler, logo, kutular, bekleme animasyonu
 python/
