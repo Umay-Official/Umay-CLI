@@ -2,7 +2,7 @@
 
 Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://umayzeka.com)'un OpenAI uyumlu API'siyle sohbet eder; bilgisayarındaki dosyalarla çalışır; PowerPoint, Word, Excel, şema ve web projesi üretir.
 
-> Bu proje Umay ekibine sunulmak üzere hazırlanmış bağımsız bir istemcidir. Umay tarafından onaylanana kadar resmî bir Umay ürünü değildir.
+> Umay'ın resmî komut satırı uygulamasıdır. [Eray Çiçek](https://github.com/cekYc) tarafından geliştirilir ve [Umay Official](https://github.com/Umay-Official) hesabında yayımlanır.
 
 <p align="center"><img src="docs/ekran.png" alt="Umay CLI: açılış ekranı ve /sunum komutu" width="640"></p>
 
@@ -32,8 +32,8 @@ Windows 11'de geliştirildi ve test edildi. macOS ve Linux'ta araçlar `sh` kull
 ## Kurulum
 
 ```powershell
-git clone https://github.com/cekYc/umay-cli.git
-cd umay-cli
+git clone https://github.com/Umay-Official/Umay-CLI.git
+cd Umay-CLI
 npm ci
 npm link
 ```

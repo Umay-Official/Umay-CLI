@@ -25,4 +25,4 @@ Bu depo bağımlılıkların kodunu içermez; `npm ci` ile kurulurlar. Her biri 
 
 ## Marka
 
-"Umay", "Umay Akıllı", "Umay Hızlı" ve Umay logosu, Umay yapay zeka hizmetinin ([umayzeka.com](https://umayzeka.com)) sahiplerine aittir. Bu proje Umay ekibine sunulmak üzere hazırlanmış bağımsız bir istemcidir; Umay tarafından onaylanana kadar resmî bir Umay ürünü değildir.
+"Umay", "Umay Akıllı", "Umay Hızlı" ve Umay logosu, Umay yapay zeka hizmetinin ([umayzeka.com](https://umayzeka.com)) sahiplerine aittir. Umay CLI, Umay ekibinin onayıyla Umay'ın resmî komut satırı uygulaması olarak [Umay Official](https://github.com/Umay-Official) hesabında yayımlanır; kodun telif hakkı ve lisansı [LICENSE](LICENSE) dosyasındaki gibidir.

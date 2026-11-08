@@ -13,13 +13,13 @@
   ],
   "author": "Eray Çiçek (https://github.com/cekYc)",
   "license": "SEE LICENSE IN LICENSE",
-  "homepage": "https://github.com/cekYc/umay-cli#readme",
+  "homepage": "https://github.com/Umay-Official/Umay-CLI#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cekYc/umay-cli.git"
+    "url": "git+https://github.com/Umay-Official/Umay-CLI.git"
   },
   "bugs": {
-    "url": "https://github.com/cekYc/umay-cli/issues"
+    "url": "https://github.com/Umay-Official/Umay-CLI/issues"
   },
   "bin": {
     "umay": "src/cli.mjs"
