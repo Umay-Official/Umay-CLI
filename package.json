@@ -1,0 +1,58 @@
+{
+  "name": "umay-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Umay yapay zekası için Türkçe terminal uygulaması: sohbet, yerel araçlar, PowerPoint/Word/Excel/şema/web projesi üretimi",
+  "keywords": [
+    "umay",
+    "cli",
+    "terminal",
+    "yapay-zeka",
+    "turkce",
+    "ai-agent"
+  ],
+  "author": "Eray Çiçek (https://github.com/cekYc)",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/cekYc/umay-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cekYc/umay-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cekYc/umay-cli/issues"
+  },
+  "bin": {
+    "umay": "src/cli.mjs"
+  },
+  "type": "module",
+  "files": [
+    "src/",
+    "python/bridge.py",
+    "python/tools.py",
+    "umay.cmd",
+    ".env.example",
+    "LICENSE",
+    "NOTICE.md",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "test": "node --test",
+    "check": "node --check src/cli.mjs && node --check src/client.mjs && node --check src/tools.mjs && node --check src/texttools.mjs && node --check src/theme.mjs && node --check src/markdown.mjs && node --check src/attachments.mjs && node --check src/documents.mjs && python -B -c \"import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in pathlib.Path('python').glob('*.py')]\""
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.87",
+    "ai": "^7.0.165",
+    "docx": "^8.5.0",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "pptxgenjs": "^3.12.0"
+  },
+  "overrides": {
+    "image-size": "^2.0.3",
+    "uuid": "^11.1.1"
+  }
+}

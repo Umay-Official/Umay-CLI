@@ -1,0 +1,27 @@
+node_modules/
+.env
+.env.*
+!.env.example
+sohbetler/
+*.log
+.test-tmp/
+__pycache__/
+deneme/
+
+# İşletim sistemi ve editör dosyaları
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.pyc
+
+# Office'in açık belge kilit dosyaları
+~$*
+
+# Repo kökünde umay çalıştırılınca üretilen dosyalar
+/*.pptx
+/*.docx
+/*.xlsx
+/*.zip
+/*.mmd
