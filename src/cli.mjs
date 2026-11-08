@@ -201,7 +201,8 @@ async function readKey() {
 }
 
 function previewLines(preview) {
-  const lines = clean(preview).split('\n');
+  // Trailing blank lines of a diff would only add empty rows to the box.
+  const lines = clean(preview).replace(/\s+$/, '').split('\n');
   const shown = lines.slice(0, 40).map(line => {
     if (/^(\+\+\+|---)/.test(line)) return t.white(line);
     if (line.startsWith('+')) return t.green(line);
@@ -326,7 +327,7 @@ async function main() {
       tool(event) {
         pause();
         if (event.type === 'start') {
-          console.error(`  ${t.red('⚙')} ${t.white(event.name)} ${t.dim(argSummary(event.args))}`);
+          console.error(`  ${t.red('›')} ${t.white(event.name)} ${t.dim(argSummary(event.args))}`);
           return;
         }
         const bad = /^(Hata:|Kullanıcı)/.test(event.result);
@@ -349,7 +350,7 @@ async function main() {
       cwd: currentDir, auto: values.yes,
       onEvent: event => {
         if (view) { view.tool(event); return; }
-        console.error(t.dim(`  ⚙ ${event.name}: ${clean(event.type === 'start' ? 'çalışıyor…' : event.result.split('\n')[0]).slice(0, 200)}`));
+        console.error(t.dim(`  › ${event.name}: ${clean(event.type === 'start' ? 'çalışıyor…' : event.result.split('\n')[0]).slice(0, 200)}`));
       },
       confirm: async ({ name, preview, signal }) => {
         if (!process.stdin.isTTY) return false;
@@ -546,7 +547,7 @@ async function main() {
           // Text-protocol tool traffic is shown as short markers, not raw blocks.
           const toolResults = [...text.matchAll(/<tool_result name="([^"]+)">/g)].map(match => match[1]);
           if (message.role === 'tool' || toolResults.length) {
-            console.log(`  ${t.dim(`  ⚙ ${toolResults.length ? toolResults.join(', ') + ' sonucu' : 'araç sonucu'}`)}`);
+            console.log(`  ${t.dim(`  › ${toolResults.length ? toolResults.join(', ') + ' sonucu' : 'araç sonucu'}`)}`);
             continue;
           }
           text = text.replace(/<tool_call>\s*\{"name":\s*"([^"]+)"[\s\S]*?<\/tool_call>/g, '[araç: $1]').trim();

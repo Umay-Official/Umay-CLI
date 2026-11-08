@@ -130,6 +130,10 @@ Notlar `~/.umay/bellek.md` dosyasında düz metin olarak durur; her `- ` ile ba�
 
 Araçlar, yerel modellerle çalışan [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden (`ai-cli/tools.py`) alındı ve Umay CLI'ye uyarlandı: Node.js tarafına bir Python köprüsü (`python/bridge.py`), çalışan komutları iptal etme ve metin tabanlı araç çağrısı eklendi.
 
+Örnek: "hesap.py'deki hatayı bul, düzelt ve test_hesap.py ile doğrula" isteğinde Umay dosyaları okuyor, düzeltmeyi farkıyla onaya sunuyor, testi onayla çalıştırıp sonucu söylüyor.
+
+<p align="center"><img src="docs/arac-kullanimi.png" alt="Umay CLI araç kullanımı: dosyaları okuma, onaylı düzenleme farkı, onaylı test komutu ve sonuç" width="680"></p>
+
 | Araç | Ne yapar | Onay |
 | --- | --- | --- |
 | `list_dir` | Dosya ve klasörleri listeler | — |
@@ -191,7 +195,7 @@ python/
   bridge.py        Node.js ile JSON satırları üzerinden konuşan köprü
   tools.py         Araçların uygulaması (Gambit AI CLI'den)
 test/              node:test testleri; sahte sunucu kullanır, API harcamaz
-docs/              Ekran görüntüsü, kıyaslama ve API gözlemleri
+docs/              Ekran görüntüleri, kıyaslama ve API gözlemleri
 ```
 
 ## Geliştirme
