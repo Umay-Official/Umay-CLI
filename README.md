@@ -172,7 +172,7 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-s
 | `UMAY_MODEL` | `umay-akilli` (varsayılan) veya `umay-hizli` |
 | `UMAY_THINKING` | `ac`, `kapat` veya `otomatik` (varsayılan otomatik) |
 | `UMAY_BASE_URL` | API adresi (varsayılan `https://umayzeka.com/v1`; HTTPS zorunlu, yalnızca localhost için HTTP) |
-| `UMAY_PYTHON` | Python PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |
+| `UMAY_PYTHON` | Kullanılacak Python (varsayılan: Windows'ta `python`, diğer sistemlerde `python3`); PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |
 | `UMAY_TOOL_MODE` | `text` (varsayılan) veya yerleşik araç çağrısı destekleyen sunucular için `native` |
 | `UMAY_PROTECTED_DIRS` | Yazma araçlarına kapalı klasörler; Windows'ta `;`, diğer sistemlerde `:` ile ayrılır |
 | `UMAY_IMAGES` | `1` ise görsel eklemeye izin verir (Umay API şu an görselleri işlemiyor) |

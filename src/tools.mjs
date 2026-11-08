@@ -7,7 +7,8 @@ import { tool, jsonSchema } from 'ai';
 const bridgePath = fileURLToPath(new URL('../python/bridge.py', import.meta.url));
 
 export class ToolRuntime {
-  constructor({ cwd = process.cwd(), python = process.env.UMAY_PYTHON || 'python',
+  // Most Linux and macOS systems only have "python3"; Windows installs "python".
+  constructor({ cwd = process.cwd(), python = process.env.UMAY_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
     confirm = async () => false, onEvent = () => {}, auto = false } = {}) {
     this.cwd = path.resolve(cwd);
     this.python = python;
