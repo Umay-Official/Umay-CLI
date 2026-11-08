@@ -21,6 +21,16 @@ export function validateBaseURL(value) {
   return url.href.replace(/\/+$/, '');
 }
 
+const GATEWAY = new Set([502, 504, 520, 521, 522, 523, 524]);
+
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
+}
+
 class ResponseError extends Error {
   constructor(message, status) { super(message); this.statusCode = status; }
 }
@@ -79,7 +89,14 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
       ? { ...body, enable_thinking: thinking, chat_template_kwargs: { enable_thinking: thinking } } : body,
     // Do not forward credentials to a redirect or show an HTML page as an AI answer.
     fetch: async (url, init) => {
-      const response = await fetch(url, { ...init, redirect: 'manual' });
+      let response = await fetch(url, { ...init, redirect: 'manual' });
+      // Gateway errors (Cloudflare 52x, 502, 504) are usually momentary: the request did not reach the model,
+      // so it is sent once more after a short wait. 503 is Umay's maintenance answer and is not repeated.
+      if (GATEWAY.has(response.status)) {
+        await response.body?.cancel();
+        await pause(2000, init?.signal);
+        response = await fetch(url, { ...init, redirect: 'manual' });
+      }
       const contentType = response.headers.get('content-type') ?? '';
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel();
@@ -87,6 +104,9 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
       }
       if (!/application\/(?:[\w.-]+\+)?json|text\/event-stream/i.test(contentType)) {
         await response.body?.cancel();
+        if (GATEWAY.has(response.status)) {
+          throw new ResponseError(`Umay sunucusuna şu an ulaşılamıyor (HTTP ${response.status}). Bu Umay tarafında geçici bir sorun; biraz sonra tekrar dene.`, response.status);
+        }
         throw new ResponseError(`Sunucu JSON veya olay akışı yerine web sayfası döndürdü (HTTP ${response.status}). API adresini kontrol et.`, response.status);
       }
       return response;

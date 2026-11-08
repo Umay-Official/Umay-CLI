@@ -93,12 +93,18 @@ export class ToolRuntime {
       tools[entry.name] = tool({
         description: entry.description,
         inputSchema: jsonSchema({ ...entry.parameters, additionalProperties: false }),
-        execute: async args => {
+        execute: async (input = {}) => {
+          // Models sometimes add arguments the tool does not have (e.g. project_name). They are dropped with a
+          // note instead of failing the call, which used to cost the model a step to retry.
+          const known = entry.parameters?.properties ?? {};
+          const extra = Object.keys(input).filter(key => !(key in known));
+          const args = extra.length ? Object.fromEntries(Object.entries(input).filter(([key]) => key in known)) : input;
           const run = async () => {
             signal?.throwIfAborted();
             this.onEvent({ type: 'start', name: entry.name, args });
             try {
-              const result = await this.execute(entry, args, signal, failedCommands, changes);
+              let result = await this.execute(entry, args, signal, failedCommands, changes);
+              if (extra.length) result += `\n(Not: bu araçta olmayan argümanlar yok sayıldı: ${extra.join(', ')})`;
               const success = !result.startsWith('Hata:') && !result.startsWith('Kullanıcı') &&
                 (!['run_command', 'run_python'].includes(entry.name) || /^çıkış kodu: 0(?:\n|$)/.test(result));
               if (entry.needsApproval && success) changes++;

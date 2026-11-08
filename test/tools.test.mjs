@@ -238,3 +238,13 @@ test('CLI one-shot refuses a write without approval and --yes enables it explici
   assert.equal((await run(['--yes'])).code, 0);
   assert.equal(await readFile(path.join(cwd, target), 'utf8'), 'ok');
 });
+
+test('arguments a tool does not have are dropped with a note; tool errors read as plain sentences', async t => {
+  const { tools, cwd } = await setup(t, { auto: true });
+  const result = await tools.write_file.execute({ path: 'a.txt', content: 'veri', project_name: 'oyun' });
+  assert.equal(await readFile(path.join(cwd, 'a.txt'), 'utf8'), 'veri');
+  assert.match(result, /yok sayıldı: project_name/);
+  const missing = await tools.read_file.execute({ path: 'yok.txt' });
+  assert.match(missing, /^Hata: /);
+  assert.doesNotMatch(missing, /ToolError/);
+});

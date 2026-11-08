@@ -1,6 +1,6 @@
 {
   "name": "umay-cli",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Umay yapay zekası için Türkçe terminal uygulaması: sohbet, yerel araçlar, PowerPoint/Word/Excel/şema/web projesi üretimi",
   "keywords": [

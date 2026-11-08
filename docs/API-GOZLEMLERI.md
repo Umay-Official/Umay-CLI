@@ -19,6 +19,8 @@ Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Den
 - Anahtarsız istek `401` ve JSON gövde döndürür; mesaj `umay-sk-...` biçimini belirtir. Yönlendirme veya HTML sayfası dönmez; bu, istemcide anlaşılır hata göstermeyi kolaylaştırıyor.
 - Panelde hesap başına günlük 130.000 istek (RPD) ve dakikada 100 istek (RPM) sınırı görünüyor. Denemeler boyunca sınıra yaklaşılmadı.
 
+- Bir test kullanıcısı uzun bir ajan oturumunda `HTTP 522` aldı (Cloudflare, Umay'ın asıl sunucusuna zamanında ulaşamadı; yanıt HTML). CLI artık 502, 504 ve 520–524 yanıtlarında isteği 2 saniye sonra bir kez tekrarlıyor ve sorunu "Umay tarafında geçici" olarak bildiriyor.
+
 ## Yerleşik araç çağrısı
 
 İstekte OpenAI biçiminde `tools` dizisi (yedi araç, JSON şemalarıyla) gönderildi. Yanıtta `tool_calls` hiç gelmedi. Model araçları düz metin olarak, şemadaki adlar yerine tahmin ettiği adlarla yazdı:

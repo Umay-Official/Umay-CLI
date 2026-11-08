@@ -117,7 +117,9 @@ def worker():
                 raise tools.ToolError("Kullanıcı iptal etti.")
             result = {"id": request["id"], "result": dispatch(request)}
         except Exception as error:
-            result = {"id": request.get("id"), "error": f"{type(error).__name__}: {error}"}
+            # Expected tool errors are shown as plain sentences; unexpected ones keep their type for debugging.
+            text = str(error) if isinstance(error, tools.ToolError) else f"{type(error).__name__}: {error}"
+            result = {"id": request.get("id"), "error": text}
         print(json.dumps(result, ensure_ascii=False), flush=True)
         with state_lock:
             cancelled.discard(current_id)

@@ -302,3 +302,18 @@ test('CLI thinking setting: flags, old settings files and the default', async t 
   await runOnce([], { thinkingMode: 'kapalı' });
   assert.deepEqual(bodies.map(body => body.enable_thinking), [undefined, true, false, undefined, true, false]);
 });
+
+test('a Cloudflare gateway error is retried once, then explained as a temporary Umay problem', async t => {
+  let fail = 1;
+  const { baseURL, bodies } = await server(t, res => {
+    if (fail-- > 0) { res.writeHead(522, { 'Content-Type': 'text/html' }); res.end('<html>522</html>'); return; }
+    reply(res, 'Tamam');
+  });
+  const result = await chat({ apiKey: 'k', baseURL, stream: false, messages: [{ role: 'user', content: 'sa' }] });
+  assert.equal(result.text, 'Tamam');
+  assert.equal(bodies.length, 2, 'one retry');
+  fail = 2;
+  await assert.rejects(chat({ apiKey: 'k', baseURL, stream: false, messages: [{ role: 'user', content: 'sa' }] }),
+    error => /Umay sunucusuna şu an ulaşılamıyor \(HTTP 522\)/.test(friendlyError(error)));
+  assert.equal(bodies.length, 4, 'only one retry per request');
+});
