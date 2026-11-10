@@ -15,7 +15,7 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 - **Uzmanlar konseyi:** `/konsey` ile yazılımcı, tasarımcı ve pazarlamacı bir konuyu tartışır, moderatör özetler.
 - **Bellek:** `/bellek ekle` ile kaydedilen notlar her sohbette Umay'a hatırlatılır; notlar bilgisayarında düz metin dosyada durur.
 - **Ekler ve GitHub:** `/ekle` ile metin, kod, Word, Excel, PowerPoint dosyası; `/github` ile herkese açık bir depoyu indirip incelettirme.
-- **Kıyaslama:** Gambit Bench v2'nin 39 görevinde Umay Akıllı (düşünme açık) 87,6, Umay Hızlı 81,4 puan aldı. Grafikler, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
+- **Kıyaslama:** Gambit Bench v2'nin 39 görevinde düşünme açıkken Umay Akıllı 89,4, Umay Hızlı 87,2, Umay Daha Zeki 71,3, Umay Ultra Hızlı 61,7 puan aldı. Grafikler, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
 - **Kırmızı-beyaz arayüz:** ☾★ logosu, renkli onay kutuları, değişiklik farkları.
 
 ## Gereksinimler

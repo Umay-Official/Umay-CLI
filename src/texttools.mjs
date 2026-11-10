@@ -88,7 +88,10 @@ function parseSegment(segment) {
     if (source.startsWith('{')) {
       let object;
       try { object = looseJson(source.slice(0, balanced(source, 0, '{', '}', '"') + 1)); }
-      catch { object = looseJson(source.slice(0, source.lastIndexOf('}') + 1)); }
+      catch {
+        try { object = looseJson(source.slice(0, source.lastIndexOf('}') + 1)); }
+        catch (error) { object = repairJson(source, error); }
+      }
       name = object.name ?? object.tool ?? object.function?.name;
       args = object.arguments ?? object.parameters ?? object.args ?? object.function?.arguments ?? {};
       if (typeof args === 'string') args = looseJson(args);
@@ -121,6 +124,72 @@ function looseJson(text) {
     if (fixed === text) throw error;
     return JSON.parse(fixed);
   }
+}
+
+const JSON_ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '/': '/', '\\': '\\', '"': '"' };
+const LITERALS = { true: true, false: false, null: null, True: true, False: false, None: null };
+const REPAIR_TAIL = 12;
+
+// Reads an object whose ending a model garbled after a long argument: a missing or wrong closing bracket
+// ("})", "}]"), stray characters ("\n}}", "\"/>") or a half-written key ("\"}\"}}"). Repairs are accepted only
+// at the very end: once one is made no more data may follow, so a call broken in the middle (for example an
+// unescaped quote inside code) is still rejected instead of being cut short. Unknown escapes keep their
+// backslash. Throws `original` when the text cannot be repaired.
+function repairJson(text, original) {
+  let i = 0;
+  let repairedAt = -1;
+  const repair = at => { if (repairedAt < 0) repairedAt = at; };
+  const space = () => { while (i < text.length && /\s/.test(text[i])) i++; };
+  const string = () => {
+    let out = '';
+    for (i++; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') { i++; return out; }
+      if (char === '\\' && i + 1 < text.length) {
+        const next = text[++i];
+        if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(text.slice(i + 1, i + 5))) {
+          out += String.fromCharCode(parseInt(text.slice(i + 1, i + 5), 16)); i += 4;
+        } else out += JSON_ESCAPES[next] ?? '\\' + next;
+      } else out += char;
+    }
+    return null;
+  };
+  const value = () => {
+    space();
+    if (repairedAt >= 0) throw original;
+    if (text[i] === '{' || text[i] === '[') return container();
+    if (text[i] === '"') { const out = string(); if (out === null) throw original; return out; }
+    const literal = /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|True|False|None)/.exec(text.slice(i));
+    if (!literal) throw original;
+    i += literal[0].length;
+    return literal[0] in LITERALS ? LITERALS[literal[0]] : Number(literal[0]);
+  };
+  const container = () => {
+    const object = text[i] === '{';
+    const out = object ? {} : [];
+    i++;
+    for (;;) {
+      space();
+      if (i >= text.length) { repair(i); return out; }
+      const char = text[i];
+      if (char === (object ? '}' : ']')) { i++; return out; }
+      if ('}])'.includes(char)) { repair(i); i++; return out; }
+      if (char === ',') { i++; continue; }
+      if (!object) { out.push(value()); continue; }
+      const at = i;
+      if (char !== '"') { repair(at); i++; continue; }
+      const key = string();
+      space();
+      if (key === null || text[i] !== ':') { repair(at); continue; }
+      i++;
+      out[key] = value();
+    }
+  };
+  space();
+  if (text[i] !== '{') throw original;
+  const result = container();
+  if (repairedAt >= 0 && text.slice(repairedAt).replace(/[\s{}[\]()]/g, '').length > REPAIR_TAIL) throw original;
+  return result;
 }
 
 // Index of the bracket closing the one at `open`, skipping quoted strings.

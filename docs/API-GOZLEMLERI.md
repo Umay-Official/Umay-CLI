@@ -1,13 +1,15 @@
 # Umay API Gözlemleri
 
-Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Denemeler 7–8 Kasım 2026'da, Geliştirici & API Paneli'nden alınan ücretsiz bir anahtarla, Windows 11 üzerinde yapıldı. Amaç, Umay ekibine istemci tarafından görünen davranışı aktarmak.
+Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Denemeler 7–9 Kasım 2026'da, Geliştirici & API Paneli'nden alınan ücretsiz bir anahtarla, Windows 11 üzerinde yapıldı. Amaç, Umay ekibine istemci tarafından görünen davranışı aktarmak.
 
 ## Özet
 
 | Konu | Durum | Not |
 | --- | --- | --- |
 | Sohbet (`/v1/chat/completions`) | ✅ Çalışıyor | JSON ve akış (SSE) yanıtları sorunsuz |
-| Modeller | ✅ | `umay-akilli`, `umay-hizli` |
+| Modeller | ✅ | `umay-akilli`, `umay-hizli`; 9 Kasım'dan beri `umay-ultra-hizli`, `umay-daha-zeki` (belgelerde henüz yok) |
+| Bilinmeyen model adı | ⚠️ Hata vermiyor | İstek sessizce `umay-akilli`'ye gidiyor |
+| Yeni modellerin hızı | ⚠️ Çok yavaş | İlk token 10–120 sn; ~2 dakikada gelmezse akış boş kapanıyor |
 | Düşünme modu | ✅ Çalışıyor | `enable_thinking` ile `reasoning_content` geliyor |
 | Yerleşik araç çağrısı (`tools`) | ❌ Kullanılmıyor | Model `tool_calls` döndürmüyor; CLI metin protokolüyle çözdü |
 | Görseller | ❌ İşlenmiyor | İstek hata vermiyor ama Akıllı da Hızlı da görseli görmüyor |
@@ -51,6 +53,37 @@ Site kendi sunucusuna `enable_thinking` gönderiyor. CLI, düşünme açıkken A
 
 **Öneri:** Hangi alanın desteklendiği API belgelerinde yazarsa istemciler doğru alanı gönderebilir. Düşüncelerin de Türkçe olması Türkçe kullanıcılar için daha anlaşılır olur.
 
+## Yeni modeller: Ultra Hızlı ve Daha Zeki
+
+9 Kasım 2026'da sitenin model menüsüne Umay Ultra Hızlı ve Umay Daha Zeki eklendi. Geliştirici panelindeki API örneklerinde hâlâ yalnızca `umay-akilli` ve `umay-hizli` yazıyor. Sitenin betiklerindeki adlar API'de denendi; yanıttaki `model` alanı sunucunun isteği hangi modele yönlendirdiğini gösteriyor:
+
+| İstekteki model | Yanıttaki `model` |
+| --- | --- |
+| `umay-ultra-hizli`, `ultra-fast` | `umay-ultra-hizli` |
+| `umay-daha-zeki`, `umay-zeki`, `smarter` | `umay-daha-zeki` |
+| Bilinmeyen bir ad (ör. `umay-boyle-bir-model-yok`) | `umay-akilli` |
+
+- Bilinmeyen model adı hata vermiyor, istek `200` ile Umay Akıllı'ya gidiyor; adı yanlış yazan istemci bunu fark edemiyor.
+- `enable_thinking: true` ile iki yeni modelde de düşünceler `reasoning_content` alanında geliyor.
+- Ultra Hızlı düşünme kapalıyken (`enable_thinking: false`) İngilizce iç sesini cevabın içine yazdı ("Actually, I'll output the correct official list…") ve istenen listeyi yarım bıraktı.
+
+Hız, 9 Kasım 03:30–03:45 arasında art arda gönderilen tek tek isteklerle ölçüldü:
+
+| | Umay Akıllı | Umay Hızlı | Umay Ultra Hızlı | Umay Daha Zeki |
+| --- | --- | --- | --- | --- |
+| Kısa yanıt ("tamam", akışsız, düşünme kapalı) | 0,9 sn | 1,5 sn | 10–25 sn | 63–81 sn |
+| Akışta ilk token (81 il listesi, düşünme kapalı) | 3,4 sn | yanıt boş geldi | 31 sn; bir denemede boş | 44–120 sn; bir denemede boş |
+| Akış hızı | 233 karakter/sn | – | 246 karakter/sn | 49–55 karakter/sn |
+| Düşünme açıkken ilk düşünce | 1,3 sn | 0,8 sn | 0,6–4,1 sn | 40–49 sn |
+
+- **Boş akış:** İlk token yaklaşık 2 dakika içinde gelmezse sunucu bağlantıyı `200` ile, hiç `data:` olayı ve `finish_reason` göndermeden kapatıyor (iki denemede de 125 sn). İstemci bunu modelin boş cevabından ayıramıyor.
+- **Arka uca ulaşılamadığında:** 9 Kasım 04:25 civarında Daha Zeki'ye giden her istek yaklaşık 1 dakika sonra akış içinde bir hata olayıyla bitti: "Tüm API anahtarları denendi fakat yanıt alınamadı". Mesajda arka uçtaki sağlayıcının adresi ve ondan gelen `HTTP 429 Too Many Requests` de yer alıyor.
+- **Uzun yanıtlarda kesilme:** Sunucu her isteği yaklaşık 180 saniyede kesiyor; çıktı akmaya devam etse bile akış "context deadline exceeded (Client.Timeout or context cancellation while reading body)" hatasıyla bitiyor. 9 Kasım sabahki benchmark'ta Ultra Hızlı düşünme açıkken 14 sıfırın 10'u bundan geldi: model cevaba ya da araç çağrısına geçmeden önce 3 dakikadan uzun düşündü.
+- **Daha Zeki'nin değişmesi:** 9 Kasım 16:50 civarında Daha Zeki'nin davranışı değişti: zaman aşımı mesajı "Yapay zeka motoru yanıt süresi aşıldı (Zaman aşımı)" oldu ve yanıtlar 40–120 saniye yerine birkaç saniyede gelmeye başladı. İlk yarım saatte cevapların başında İngilizce bir "thought" bloğu görüldü; akşamki koşuda bu tekrarlanmadı. Ultra Hızlı da aynı gün sabahtan akşama değişti: düşünme kapalıyken araç kullanılmayan görevlerde ortalama süre 238 saniyeden 9 saniyeye indi ve cevapları Daha Zeki'ninkilerle aynılaştı. Aynı model adının arkasındaki model değişirse önceki ölçümler geçerliliğini yitirir.
+- **Araç çağrılarının sonu:** Umay modelleri API'de yerleşik araç çağrısı yerine metin içinde `<tool_call>` blokları yazıyor. Uzun bir dosya ya da kod argümanından sonra JSON'un sonu sık sık bozuluyor: eksik `}`, `}` yerine `)` ya da `]`, sonda fazladan `"}}`. Umay CLI bu kapanışları onarıyor (yalnızca sondaki birkaç karakteri; ortası bozuk çağrıyı reddediyor). Daha Zeki onarım öncesinde dosya yazılmadığı hâlde "dosya oluşturuldu" dedi.
+
+**Öneri:** Yeni model adlarının ve `/v1/models` listesinin belgelere eklenmesi; bilinmeyen model adına `404` ya da `400`; zaman aşımında akışa bir hata olayı (ya da `504`) gönderilmesi ve 180 saniyelik sınırın belgelenmesi ya da uzatılması; model adının arkasındaki model değiştiğinde duyurulması; API'de yerleşik araç çağrısı (`tools`); arka uç geçici olarak yanıt vermiyorsa `503` ve `Retry-After`; hata mesajlarında iç sağlayıcı ayrıntılarının istemciye gönderilmemesi.
+
 ## Görseller
 
 Bir `.jpg` görsel, OpenAI biçiminde görsel parçası olarak (`image_url`, base64 veri adresi) gönderildi. İstek `200` döndü ama model görseli görmedi; önceki konuşmadaki bir şemayı anlatmaya başladı. Sonraki denemede görseli tanıyamadığını kendisi söyledi.
@@ -85,13 +118,18 @@ Belge komutları modelden JSON, Markdown, Mermaid veya `DOSYA:` blokları ister;
 
 ## Benchmark
 
-8 Kasım 2026'da Umay Akıllı (düşünme açık), Umay CLI ile Gambit Bench v2'nin 39 görevinde koşturuldu: genel puan **87,6** (zor görevlerde 86,5), 21 görev tam puan, toplam 45 dakika. Aynı görevlerde en iyi yerel model Qwen3.8 27B, süre sınırı olmadan 84,3 almıştı (toplam 872 dakika). Akıllı düşünme açık kategorileri: hata ayıklama 100, mantık 96, terminal 95, ajan 90, kod okuma 90, SQL 87, kod yazma 85, kod inceleme 77, talimat 51. Grafik ve koşullar: [KIYASLAMA.md](KIYASLAMA.md).
+9–10 Kasım 2026 gecesi dört model, Umay CLI ile Gambit Bench v2'nin 39 görevinde süre sınırı olmadan koşturuldu. Umay Akıllı düşünme açıkken **89,4** aldı (zor görevlerde 89,1), 22 görev tam puan, toplam 47 dakika; aynı görevlerde en iyi yerel model Qwen3.8 27B 84,3 almıştı (toplam 872 dakika). Akıllı düşünme açık kategorileri: hata ayıklama 100, terminal 98, talimat 97, mantık 96, kod yazma 95, kod inceleme 90, SQL 87, kod okuma 85, ajan 66. Grafik ve koşullar: [KIYASLAMA.md](KIYASLAMA.md).
 
-Aynı gün Akıllı alan gönderilmeden (otomatik) 83,2 ve `enable_thinking: false` ile 65,2; Hızlı düşünme açıkla 81,4, otomatikte 79,4 ve kapalıyla 68,7 aldı.
+Aynı gece Akıllı otomatikte 72,1 ve kapalıyla 67,5; Hızlı açıkla 87,2, kapalıyla 73,9 ve otomatikte 64,9; Daha Zeki açıkla 71,3 ve kapalıyla 52,4; Ultra Hızlı açıkla 61,7 ve kapalıyla 42,3 aldı.
 
-**Yanıt uzunluk sınırı:** Bu koşulardaki 13 sıfırın hepsinde yanıt cevaba ya da araç çağrısına gelmeden kesildi. Umay Hızlı'da yanıt her seferinde yaklaşık 26–33 bin karakterde (yaklaşık 8 bin token), Umay Akıllı'da 9–13 bin karakterde bitti. Hızlı, düşünme açıkken ve alan gönderilmediğinde cevaptan önce uzun plan yazıyor; bu yüzden uzun kod isteyen görevlerde hiç cevap veremedi. `enable_thinking: false` ile 78 görevde hiç kesilme olmadı. Kesilen yanıtlarda `finish_reason` `length` değildi, yani istemci yanıtın kesildiğini anlayamıyor. **Öneri:** Yanıt sınırının belgelenmesi ya da düşünce için ayrı bir bütçe ayrılması, kesilen yanıtlarda `finish_reason: "length"` dönmesi ve alan gönderilmediğinde düşünmenin açık mı kapalı mı olduğunun belgelenmesi.
+- **Otomatik mod değişti:** 8 Kasım'da alan gönderilmediğinde Umay düşünüyordu (araçsız görevlerde görev başına medyan Akıllı'da ~4.000, Hızlı'da ~9.400 karakter düşünce). 9–10 Kasım gecesi alan gönderilmediğinde hiç düşünce gelmedi ve puanlar kapalıya yaklaştı (Akıllı 83,2 → 72,1, Hızlı 79,4 → 64,9). Alan gönderilmediğinde ne olacağı belgelenmediği için bu değişiklik istemciden fark edilemiyor.
+- **`enable_thinking: false` uyuluyor:** Dört modelde de `false` gönderildiğinde hiçbir yanıtta düşünce gelmedi; `true` gönderildiğinde her yanıtta geldi.
+- **Ultra Hızlı ve Daha Zeki:** Akşamki koşuda araç kullanılmayan görevlerde düşünme kapalıyken neredeyse aynı cevapları verdiler; iki adın arkasında aynı model var gibi görünüyor. Ultra Hızlı sabah düşünme kapalıyken 73,7 almıştı.
+- **Sunucu hataları:** Akıllı'ya giden istekler gece yaklaşık 80 dakika boyunca "Yapay zeka servisleri şu anda yanıt veremiyor" hatasıyla döndü; Hızlı'da iki yanıt 180. saniyede aynı hatayla kesildi.
 
-Akıllı'nın düşünme açıkken aldığı tek sıfır, 9 kurallı bir metin görevinde modelin kuralları uzun uzun hesaplarken yanıt uzunluk sınırına ulaşması ve cevap yazamamasıydı (yanıt yalnızca düşünceden oluştu). Düşünme modunda yanıt bütçesinin ne kadarının düşünceye ayrılabileceği belgelenirse istemciler buna göre davranabilir.
+**Yanıt uzunluk sınırı (8 Kasım):** O günkü koşulardaki 13 sıfırın hepsinde yanıt cevaba ya da araç çağrısına gelmeden kesildi. Umay Hızlı'da yanıt her seferinde yaklaşık 26–33 bin karakterde (yaklaşık 8 bin token), Umay Akıllı'da 9–13 bin karakterde bitti. Hızlı, düşünme açıkken ve alan gönderilmediğinde cevaptan önce uzun plan yazıyor; bu yüzden uzun kod isteyen görevlerde hiç cevap veremedi. `enable_thinking: false` ile 78 görevde hiç kesilme olmadı. Kesilen yanıtlarda `finish_reason` `length` değildi, yani istemci yanıtın kesildiğini anlayamıyor. **Öneri:** Yanıt sınırının belgelenmesi ya da düşünce için ayrı bir bütçe ayrılması, kesilen yanıtlarda `finish_reason: "length"` dönmesi ve alan gönderilmediğinde düşünmenin açık mı kapalı mı olduğunun belgelenmesi.
+
+9–10 Kasım gecesi bu kesilme yalnızca bir kez görüldü (Daha Zeki, bir talimat görevi). 8 Kasım'da Akıllı'nın düşünme açıkken aldığı tek sıfır, 9 kurallı bir metin görevinde modelin kuralları uzun uzun hesaplarken yanıt uzunluk sınırına ulaşması ve cevap yazamamasıydı (yanıt yalnızca düşünceden oluştu). Düşünme modunda yanıt bütçesinin ne kadarının düşünceye ayrılabileceği belgelenirse istemciler buna göre davranabilir.
 
 ## Site ile API arasındaki fark
 

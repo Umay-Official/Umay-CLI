@@ -80,6 +80,25 @@ test('parser handles quoted code, escapes, numbers and string-encoded arguments'
   assert.match(broken.calls[0].error, /okunamadı/);
 });
 
+test('parser repairs garbled endings after a long argument (Umay Daha Zeki output)', () => {
+  const content = 'def f():\n    return {"a": 1}\n';
+  const head = `{"name": "write_file", "arguments": {"path": "a.py", "content": ${JSON.stringify(content)}`;
+  for (const tail of ['}', '}]', '\n})', ')}}', '}"}}', '}"/>', '\\n}}', ',"",""}}', '"""}']) {
+    const parsed = parseToolCalls(`<tool_call>\n${head}${tail}\n</tool_call>`);
+    assert.deepEqual(parsed.calls[0], { name: 'write_file', args: { path: 'a.py', content } }, `son: ${tail}`);
+  }
+  const pythonLiteral = parseToolCalls('<tool_call>{"name": "write_file", "arguments": {"path": "a", "content": "x", "requires_approval": False}]}</tool_call>');
+  assert.deepEqual(pythonLiteral.calls[0].args, { path: 'a', content: 'x', requires_approval: false });
+});
+
+test('parser does not cut a call that is broken in the middle', () => {
+  // Unescaped quote inside the code: repairing it would silently write half a file.
+  const parsed = parseToolCalls('<tool_call>{"name": "write_file", "arguments": {"path": "a.py", "content": "x = 1\\n# Not: "tırnak" burada\\ny = 2\\n"}</tool_call>');
+  assert.match(parsed.calls[0].error, /okunamadı/);
+  const unterminated = parseToolCalls('<tool_call>{"name": "write_file", "arguments": {"path": "a.py", "content": "yarım kalan</tool_call>');
+  assert.match(unterminated.calls[0].error, /okunamadı/);
+});
+
 test('visible filter hides tool markup split across chunks', () => {
   const shown = [];
   const filter = visibleFilter(text => shown.push(text));
