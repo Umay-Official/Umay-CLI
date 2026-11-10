@@ -42,6 +42,8 @@ test('notes go in as a system message after the leading ones, newest kept within
   memory.items = ['eski ' + 'x'.repeat(MEMORY_LIMIT), 'yeni'];
   assert.doesNotMatch(memory.systemText(), /eski/);
   assert.match(memory.systemText(), /- yeni$/);
+  memory.items = ['x'.repeat(MEMORY_LIMIT + 1)];
+  assert.equal(memory.apply(list), list, 'nothing fits: no heading without notes');
 });
 
 test('CLI: /bellek ekle, notes reach the model, /bellek kapat stops them, one-shot uses them too', async t => {

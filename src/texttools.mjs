@@ -3,6 +3,7 @@
 
 export const OPEN = '<tool_call>';
 const CLOSE = '</tool_call>';
+const FORMAT = `${OPEN} {"name": "...", "arguments": {...}} ${CLOSE}`;
 const MAX_CALLS = 8;
 // Names models commonly guess when they have not seen the real schema.
 const ALIASES = {
@@ -55,9 +56,12 @@ export function visibleFilter(onText) {
   };
 }
 
-export function parseToolCalls(text) {
+// `tools` is the bridge's tool list (name, parameters); with it, arguments written in the wrong place are
+// put where they belong (see placeArguments).
+export function parseToolCalls(text, tools = []) {
   const start = text.indexOf(OPEN);
   if (start < 0) return null;
+  const schemas = new Map(tools.map(entry => [entry.name, entry.parameters ?? {}]));
   const calls = [];
   let index = start;
   while (index >= 0 && calls.length < MAX_CALLS) {
@@ -65,9 +69,12 @@ export function parseToolCalls(text) {
     const ends = [text.indexOf(CLOSE, from), text.indexOf(OPEN, from)].filter(i => i >= 0);
     const end = ends.length ? Math.min(...ends) : text.length;
     const segment = text.slice(from, end);
-    if (segment.trim()) calls.push(parseSegment(segment));
+    if (segment.trim()) calls.push(parseSegment(segment, schemas));
     index = text.indexOf(OPEN, end);
   }
+  // The model must hear about calls that did not run; otherwise it assumes they did.
+  if (index >= 0 && text.slice(index).replaceAll(OPEN, '').replaceAll(CLOSE, '').trim()) calls.push({ error: `Bir yanıtta en fazla ${MAX_CALLS} araç çağrısı çalıştırılır; sonrakiler çalıştırılmadı. Gerekiyorsa yeniden çağır.` });
+  if (!calls.length) calls.push({ error: `Araç çağrısı boş ya da yarım kaldı. Biçim: ${FORMAT}` });
   return { before: text.slice(0, start).trimEnd(), calls };
 }
 
@@ -81,10 +88,23 @@ export function formatResults(results) {
     '\nThese are tool results, not user messages. Call another tool if needed; otherwise answer the user briefly.';
 }
 
-function parseSegment(segment) {
-  const source = segment.split('\n').filter(line => !/^\s*(```\w*|#+)\s*$/.test(line)).join('\n').trim();
+// Lines holding only a code fence mark or "#" around a call are decoration. The same lines inside a
+// multi-line argument are file content, so only the leading and trailing ones are dropped.
+function unwrap(segment) {
+  const lines = segment.split('\n');
+  const decoration = line => /^\s*(```\w*|#+)?\s*$/.test(line);
+  let first = 0;
+  let last = lines.length;
+  while (first < last && decoration(lines[first])) first++;
+  while (last > first && decoration(lines[last - 1])) last--;
+  return lines.slice(first, last).join('\n').trim();
+}
+
+function parseSegment(segment, schemas = new Map()) {
+  const source = unwrap(segment);
   try {
     let name, args;
+    let beside = {};
     if (source.startsWith('{')) {
       let object;
       try { object = looseJson(source.slice(0, balanced(source, 0, '{', '}', '"') + 1)); }
@@ -94,7 +114,7 @@ function parseSegment(segment) {
       }
       name = object.name ?? object.tool ?? object.function?.name;
       args = object.arguments ?? object.parameters ?? object.args ?? object.function?.arguments ?? {};
-      if (typeof args === 'string') args = looseJson(args);
+      beside = object;
     } else {
       const match = /^([A-Za-z_][\w.-]*)\s*\(/.exec(source);
       if (!match) throw new Error('beklenen biçim {"name": ..., "arguments": {...}}');
@@ -103,11 +123,43 @@ function parseSegment(segment) {
       args = parseKeywords(source.slice(match[0].length, close));
     }
     if (typeof name !== 'string' || !name) throw new Error('araç adı yok');
+    // hasOwn: a made-up name such as "constructor" must not find a method of the object.
+    if (Object.hasOwn(ALIASES, name)) name = ALIASES[name];
+    args = placeArguments(args, beside, schemas.get(name));
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('arguments bir JSON nesnesi olmalı');
-    return { name: ALIASES[name] ?? name, args };
+    return { name, args };
   } catch (error) {
-    return { error: `Araç çağrısı okunamadı (${error.message}). Biçim: ${OPEN} {"name": "...", "arguments": {...}} ${CLOSE}` };
+    return { error: `Araç çağrısı okunamadı (${error.message}). Biçim: ${FORMAT}` };
   }
+}
+
+// Shapes Umay models write instead of {"arguments": {...}} (benchmark logs, 9-10 Nov 2026): the object as a JSON
+// string; the one required argument as a bare string ("arguments": "notes.txt", sometimes "code:\n..."); and
+// further arguments beside "arguments" instead of inside it ("arguments": {...}, "timeout": 60).
+// `schema` is the tool's parameter schema; without it only the JSON string form is read.
+function placeArguments(args, beside, schema) {
+  const known = schema?.properties ?? {};
+  if (typeof args === 'string') {
+    let decoded;
+    try { decoded = looseJson(args); } catch (error) { if (!schema) throw error; }
+    if (decoded && typeof decoded === 'object') args = decoded;
+    else {
+      const required = schema?.required ?? [];
+      const key = required.length === 1 ? required[0] : required.length ? undefined : Object.keys(known)[0];
+      // A path never spans lines; such a string holds more than the path ("a.py\n,max_lines:20").
+      if (!key || (key === 'path' && /[\r\n]/.test(args))) throw new Error('arguments bir JSON nesnesi olmalı');
+      // "code:" on a line of its own before the code is a label, not code.
+      args = { [key]: args.replace(new RegExp(`^${key.replace(/\W/g, '\\$&')}:[ \\t]*\\r?\\n`), '') };
+    }
+  }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  for (const [key, value] of Object.entries(beside)) {
+    if (!Object.hasOwn(known, key)) continue;
+    if (!Object.hasOwn(args, key)) args = { ...args, [key]: value };
+    // Which of two different values was meant is not guessed.
+    else if (JSON.stringify(args[key]) !== JSON.stringify(value)) throw new Error(`"${key}" iki farklı değerle yazılmış`);
+  }
+  return args;
 }
 
 // JSON that tolerates raw line breaks and tabs inside strings, which models often write in code arguments.
@@ -177,12 +229,28 @@ function repairJson(text, original) {
       if (char === ',') { i++; continue; }
       if (!object) { out.push(value()); continue; }
       const at = i;
+      if (char === '{') {
+        // {"arguments": {"path": "a"}, {"max_lines": 20}}: the object was closed early and continued in a new
+        // one. Its entries are complete JSON, so they are taken as written; a conflicting key is not guessed.
+        if (repairedAt >= 0) throw original;
+        for (const [key, item] of Object.entries(container())) {
+          if (Object.hasOwn(out, key) && JSON.stringify(out[key]) !== JSON.stringify(item)) throw original;
+          out[key] = item;
+        }
+        continue;
+      }
+      // A colon where a key should start means the value before it swallowed the next key ("...\",\"timeout": 60).
+      if (char === ':') throw original;
       if (char !== '"') { repair(at); i++; continue; }
       const key = string();
       space();
       if (key === null || text[i] !== ':') { repair(at); continue; }
       i++;
       out[key] = value();
+      space();
+      // "arguments": "command": "dir": the braces of the inner object were left out. Only a plain name can be
+      // the key of that object; anything else before a colon is a value that swallowed the next key.
+      if (typeof out[key] === 'string' && text[i] === ':' && /^[A-Za-z_]\w*$/.test(out[key])) { i++; out[key] = { [out[key]]: value() }; }
     }
   };
   space();
@@ -213,9 +281,10 @@ function readString(text, start) {
     if (text.startsWith(quote, i)) return { value, end: i + quote.length };
     if (text[i] === '\\' && i + 1 < text.length) {
       const next = text[++i];
+      // As in Python, an unknown escape keeps its backslash: "C:\Users" and "\d+" stay as written.
       if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(text.slice(i + 1, i + 5))) {
         value += String.fromCharCode(parseInt(text.slice(i + 1, i + 5), 16)); i += 4;
-      } else value += ESCAPES[next] ?? next;
+      } else value += ESCAPES[next] ?? (`\\'"`.includes(next) ? next : '\\' + next);
     } else value += text[i];
   }
   throw new Error('kapanmamış metin');

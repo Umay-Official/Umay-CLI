@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import JSZip from 'jszip';
+import ExcelJS from 'exceljs';
 import { chat, thinkSplitter, friendlyError } from '../src/client.mjs';
 import { markdownStream, styleText } from '../src/markdown.mjs';
 import { generate, parseProject, slugify, extractJson } from '../src/documents.mjs';
@@ -55,6 +56,19 @@ test('markdown stream wraps paragraphs, draws lists and tables, and passes throu
   plain.push(source); plain.end();
   assert.equal(raw, source);
   assert.deepEqual(styleText('**a** `b` [c](https://x.y)', {}), { text: 'a b c (https://x.y)', plain: 'a b c (https://x.y)', size: 19 });
+});
+
+test('asterisks that are not emphasis stay visible: products, powers, file patterns', () => {
+  const render = source => {
+    let out = '';
+    const md = markdownStream(text => { out += text; }, { styled: true, width: () => 100 });
+    md.push(source + '\n'); md.end();
+    return out.trim();
+  };
+  for (const literal of ['17*23=391 eder', 'Tüm *.py dosyaları ve *.txt', '2**10 = 1024 ve x**2', 'a * b * c', 'f(x)=3*x+2*y']) {
+    assert.equal(render(literal), literal);
+  }
+  assert.equal(render('*italik* ve **kalın** metin, **Ankara**\'nın ***ikisi*** de'), 'italik ve kalın metin, Ankara\'nın ikisi de');
 });
 
 test('think tags are routed to reasoning even when split across chunks', () => {
@@ -120,6 +134,27 @@ test('generators build real Office files and repair one malformed reply', async 
   assert.equal(await readFile(path.join(dir, 'sayac-uygulamasi', 'js', 'app.js'), 'utf8'), 'console.log(1)\n');
   const zip = await JSZip.loadAsync(await readFile(path.join(dir, 'sayac-uygulamasi.zip')));
   assert.ok(zip.file('sayac-uygulamasi/index.html'));
+});
+
+test('Excel keeps codes as text and years unformatted; a lone table separator does not break Word', async t => {
+  const dir = await folder(t);
+  const xlsx = await generate('rapor', { topic: 'Bayiler', cwd: dir, ask: async () => JSON.stringify({ title: 'Bayiler', sheets: [{
+    name: 'Liste', columns: ['Bayi', 'Yıl', 'Posta kodu', 'Telefon', 'Ciro'], totals: true,
+    rows: [['Ankara', 2024, '06100', '05321234567', '1250000,5'], ['İstanbul', 2025, '34000', '02121234567', 980000]] }] }) });
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.readFile(xlsx.file);
+  const sheet = book.worksheets[0];
+  // Array.from turns the gaps of empty cells into undefined.
+  const row = number => Array.from(sheet.getRow(number).values).slice(1).map(value => value?.result ?? value);
+  assert.deepEqual(row(4), ['Ankara', 2024, '06100', '05321234567', 1250000.5]);
+  assert.deepEqual(row(5), ['İstanbul', 2025, '34000', '02121234567', 980000], 'one code keeps its whole column as text');
+  assert.deepEqual(row(6), ['TOPLAM', undefined, undefined, undefined, 2230000.5], 'years and codes are not summed');
+  assert.equal(sheet.getRow(4).getCell(2).numFmt, undefined, 'a year is not shown as 2.024');
+  assert.equal(sheet.getRow(5).getCell(5).numFmt, '#,##0');
+
+  const docx = await generate('dokuman', { topic: 'Not', cwd: dir,
+    ask: async () => '# Not\n\nBu belge yeterince uzun bir giriş cümlesi içeriyor.\n\n|---|---|\n\nSon paragraf.' });
+  assert.match((await loadAttachment(docx.file, dir)).text, /giriş cümlesi[\s\S]*Son paragraf/);
 });
 
 test('project paths cannot escape the project folder and names are safe', () => {
@@ -190,6 +225,18 @@ test('attachments: text, Word read-back, binary refusal, image parts', async t =
   assert.equal(buildUserContent('düz', []), 'düz');
 });
 
+test('text attachments in Windows-1254 and UTF-16 keep their Turkish letters', async t => {
+  const dir = await folder(t);
+  // "Şubat;İstanbul;çğıöşü" as Excel's CSV export writes it on a Turkish Windows system.
+  await writeFile(path.join(dir, 'ansi.csv'), Buffer.from([0xDE, 0x75, 0x62, 0x61, 0x74, 0x3B, 0xDD, 0x73, 0x74, 0x61, 0x6E, 0x62, 0x75, 0x6C, 0x3B, 0xE7, 0xF0, 0xFD, 0xF6, 0xFE, 0xFC]));
+  assert.equal((await loadAttachment('ansi.csv', dir)).text, 'Şubat;İstanbul;çğıöşü');
+  // What Windows PowerShell 5.1 writes with ">".
+  await writeFile(path.join(dir, 'utf16.txt'), Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from('Çıktı: başarılı', 'utf16le')]));
+  assert.equal((await loadAttachment('utf16.txt', dir)).text, 'Çıktı: başarılı');
+  await writeFile(path.join(dir, 'utf8.txt'), 'düz ğüşiöç');
+  assert.equal((await loadAttachment('utf8.txt', dir)).text, 'düz ğüşiöç');
+});
+
 test('GitHub addresses are parsed strictly', () => {
   assert.deepEqual(parseGitHub('https://github.com/octocat/Hello-World'), { owner: 'octocat', repo: 'Hello-World', url: 'https://github.com/octocat/Hello-World.git' });
   assert.equal(parseGitHub('octocat/Hello-World.git').repo, 'Hello-World');
@@ -212,6 +259,30 @@ test('CLI one-shot generator command writes the file into --cwd', async t => {
   assert.ok((await readdir(dir)).includes('kitap-listesi.xlsx'));
   assert.match(stdout, /kitap-listesi\.xlsx/);
   await access(path.join(dir, 'kitap-listesi.xlsx'));
+});
+
+test('CLI one-shot: generator aliases work, UMAY_THINKING=otomatik overrides saved settings, a missing --cwd is named', async t => {
+  const dir = await folder(t);
+  const { baseURL, bodies } = await server(t, res => reply(res, 'Başlık: Sipariş\n```mermaid\nflowchart TD\n  A --> B\n```'));
+  const settings = path.join(dir, 'ayarlar.json');
+  writeFileSync(settings, JSON.stringify({ thinkingMode: 'açık' }));
+  const run = (args, env = {}) => new Promise(resolve => {
+    const child = spawn(process.execPath, ['src/cli.mjs', '--no-tools', '--no-stream', '--base-url', baseURL, ...args],
+      { env: { ...process.env, UMAY_API_KEY: 'mock', NO_COLOR: '1', UMAY_SETTINGS: settings, UMAY_THINKING: '', ...env } });
+    let stderr = '';
+    child.stdout.resume(); child.stderr.setEncoding('utf8').on('data', data => stderr += data);
+    child.stdin.end(); child.on('close', code => resolve({ code, stderr }));
+  });
+  assert.equal((await run(['--prompt', '/şema sipariş akışı', '--cwd', dir])).code, 0);
+  assert.match(bodies[0].messages[0].content, /Mermaid/, 'the alias reached the generator, not the chat');
+  assert.ok((await readdir(dir)).includes('siparis.html'));
+  await run(['--prompt', 'sa']);
+  await run(['--prompt', 'sa'], { UMAY_THINKING: 'otomatik' });
+  assert.deepEqual(bodies.slice(1).map(body => body.enable_thinking), [true, undefined]);
+  const missing = await run(['--prompt', 'sa', '--cwd', path.join(dir, 'yok')]);
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /--cwd klasörü bulunamadı/);
+  assert.equal(bodies.length, 3, 'no request without a working folder');
 });
 
 test('footer shows tokens, and speed for streamed answers, only when the server reports usage', async () => {

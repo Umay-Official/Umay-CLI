@@ -117,6 +117,20 @@ test('Python and shell commands use the working folder; repeated failing command
   assert.match(await tools.run_python.execute(failed), /çıkış kodu: 1/);
 });
 
+test('a command that exits with 0 is not a failure because it wrote to stderr (git, npm, pip do)', async t => {
+  const { tools, runtime } = await setup(t, { auto: true });
+  const check = { code: "import os, sys; sys.exit(0 if os.path.exists('hazir.txt') else 1)" };
+  assert.match(await tools.run_python.execute(check), /çıkış kodu: 1/);
+  const command = runtime.metadata.shell.includes('PowerShell')
+    ? "[Console]::Error.WriteLine('npm warn deprecated'); Set-Content hazir.txt tamam"
+    : "echo 'npm warn deprecated' >&2; echo tamam > hazir.txt";
+  const warned = await tools.run_command.execute({ command });
+  assert.match(warned, /^çıkış kodu: 0[\s\S]*npm warn deprecated/);
+  assert.doesNotMatch(warned, /Komut başarısız/);
+  // The successful command changed the situation, so the earlier failed check may run again.
+  assert.match(await tools.run_python.execute(check), /çıkış kodu: 0/);
+});
+
 test('cancelling a running command stops it and keeps the Python bridge and undo usable', async t => {
   const { runtime, tools, cwd } = await setup(t, { auto: true });
   await tools.write_file.execute({ path: 'undo.txt', content: 'undoable' });
@@ -205,6 +219,30 @@ test('streamed native tool calls are executed before the final answer', async t 
   assert.equal(output.join(''), result.text);
   assert.ok(bodies[1].messages.some(m => m.role === 'tool' && m.content.includes('stream test')));
 });
+
+for (const stream of [false, true]) {
+  test(`native tools: an approval may take longer than the time limit (${stream ? 'stream' : 'JSON'})`, async t => {
+    const { runtime, cwd } = await setup(t, { confirm: async () => { await new Promise(resolve => setTimeout(resolve, 600)); return true; } });
+    const { baseURL } = await modelServer(t, (res, bodies) => {
+      const write = bodies.length === 1;
+      if (!stream) {
+        if (write) send(res, { content: null, tool_calls: [call('write_file', { path: 'x.txt', content: 'veri' })] }, 'tool_calls');
+        else send(res, { content: 'Yazıldı.' });
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const event = (delta, finish_reason = null) => res.write('data: ' + JSON.stringify({ choices: [{ delta, finish_reason }] }) + '\n\n');
+      if (write) {
+        event({ tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'write_file', arguments: '{"path":"x.txt","content":"veri"}' } }] });
+        event({}, 'tool_calls');
+      } else { event({ content: 'Yazıldı.' }); event({}, 'stop'); }
+      res.end('data: [DONE]\n\n');
+    });
+    const result = await chat({ apiKey: 'mock', baseURL, runtime, stream, timeout: 300, messages: [{ role: 'user', content: 'Yaz' }] });
+    assert.equal(result.text, 'Yazıldı.');
+    assert.equal(await readFile(path.join(cwd, 'x.txt'), 'utf8'), 'veri');
+  });
+}
 
 test('agent stops at its step bound and preserves completed tool results', async t => {
   const { runtime } = await setup(t);

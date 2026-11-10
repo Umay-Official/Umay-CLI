@@ -154,6 +154,48 @@ test('timeouts and cancellation end pending requests', async t => {
   await assert.rejects(pending, error => error.name === 'AbortError');
 });
 
+test('the time limit counts silence from the server, not the length of an answer', async t => {
+  // Twelve chunks 60 ms apart: longer in total than the limit, but never silent for that long.
+  const steady = await serverFor(t, (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    let sent = 0;
+    const timer = setInterval(() => {
+      sse(res, { content: `p${sent} ` });
+      if (++sent === 12) { clearInterval(timer); sse(res, {}, 'stop'); res.end('data: [DONE]\n\n'); }
+    }, 60);
+  });
+  const result = await chat({ apiKey, baseURL: steady.baseURL, messages, timeout: 400 });
+  assert.equal(result.text.trim().split(' ').length, 12);
+  // A stream that starts and then goes silent still ends with a timeout.
+  const stalled = await serverFor(t, (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    sse(res, { content: 'başladı' });
+  });
+  await assert.rejects(chat({ apiKey, baseURL: stalled.baseURL, messages, timeout: 150 }), error => error.name === 'TimeoutError');
+});
+
+test('failures inside an HTTP 200 stream are explained, with the message Umay sent', async t => {
+  const failing = async (handler, pattern) => {
+    const { baseURL } = await serverFor(t, handler);
+    await assert.rejects(chat({ apiKey, baseURL, messages }), error => { assert.match(friendlyError(error, apiKey), pattern); return true; });
+  };
+  await failing((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({ error: { message: `Yapay zeka servisleri şu anda yanıt veremiyor ${apiKey}`, type: 'server_error' } }) + '\n\n');
+  }, /^Umay sunucusu hata bildirdi: Yapay zeka servisleri şu anda yanıt veremiyor \[gizli\]$/);
+  await failing((_req, res) => { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(); },
+    /hiçbir şey göndermeden bağlantıyı kapattı/);
+  await failing((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    sse(res, { content: 'Yarım yanıt' }); res.end();
+  }, /Yanıt tamamlanmadan kesildi/);
+  await failing((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    sse(res, { content: 'Yarım yanıt' });
+    setTimeout(() => res.destroy(), 30);
+  }, /Bağlantı yanıt tamamlanmadan koptu/);
+});
+
 test('URL validation allows HTTPS or loopback HTTP only', () => {
   assert.equal(validateBaseURL('https://umayzeka.com/v1/'), 'https://umayzeka.com/v1');
   assert.equal(validateBaseURL('http://localhost:123/v1'), 'http://localhost:123/v1');

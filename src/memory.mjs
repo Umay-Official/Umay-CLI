@@ -60,6 +60,8 @@ export class Memory {
       kept.unshift(item);
       size += item.length + 3;
     }
+    // A single note over the limit leaves nothing to send; a heading without notes would only confuse.
+    if (!kept.length) return '';
     return 'Kullanıcının seni hatırlaman için yazdığı kalıcı notlar. Yalnızca konuyla ilgili olduğunda kullan; '
       + 'notlardan söz edildiğinde onları kullanıcının kendi bilgileri olarak kabul et.\n'
       + kept.map(item => `- ${item}`).join('\n');

@@ -34,14 +34,25 @@ export async function loadAttachment(file, cwd, { images = process.env.UMAY_IMAG
   if (ext === '.docx') text = await docxText(buffer);
   else if (ext === '.xlsx') text = await xlsxText(buffer);
   else if (ext === '.pptx') text = await pptxText(buffer);
-  else if (buffer.subarray(0, 8000).includes(0)) {
+  else if (!hasUtf16Mark(buffer) && buffer.subarray(0, 8000).includes(0)) {
     throw new UserError(ext === '.pdf'
       ? 'PDF dosyaları okunamıyor. Metnini .txt olarak kaydedip ekleyebilirsin.'
       : 'Bu dosya metin değil. Metin, kod, Word, Excel, PowerPoint veya görsel ekleyebilirsin.');
-  } else text = buffer.toString('utf8').replace(/^﻿/, '');
+  } else text = decodeText(buffer);
   const truncated = text.length > TEXT_LIMIT;
   if (truncated) text = text.slice(0, TEXT_LIMIT) + `\n... [kesildi: ${text.length - TEXT_LIMIT} karakter daha var]`;
   return { kind: 'text', name, path: full, text, size: info.size, truncated };
+}
+
+const hasUtf16Mark = buffer => (buffer[0] === 0xFF && buffer[1] === 0xFE) || (buffer[0] === 0xFE && buffer[1] === 0xFF);
+
+// Text is UTF-8 as a rule. Two other encodings are common on Turkish Windows systems: UTF-16 with a byte order
+// mark (what Windows PowerShell 5.1 writes with ">") and Windows-1254 (Excel's "CSV" export). Read as UTF-8,
+// their Turkish letters turned into "\uFFFD" marks. TextDecoder drops the byte order mark itself.
+function decodeText(buffer) {
+  if (hasUtf16Mark(buffer)) return new TextDecoder(buffer[0] === 0xFF ? 'utf-16le' : 'utf-16be').decode(buffer);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { /* not UTF-8 */ }
+  try { return new TextDecoder('windows-1254').decode(buffer); } catch { return buffer.toString('utf8'); }
 }
 
 const decode = xml => xml.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');

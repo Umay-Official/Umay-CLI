@@ -106,8 +106,9 @@ export class ToolRuntime {
             try {
               let result = await this.execute(entry, args, signal, failedCommands, changes);
               if (extra.length) result += `\n(Not: bu araçta olmayan argümanlar yok sayıldı: ${extra.join(', ')})`;
+              // Exit code 0 counts as a change even with text on stderr: git, npm and pip write progress there.
               const success = !result.startsWith('Hata:') && !result.startsWith('Kullanıcı') &&
-                (!['run_command', 'run_python'].includes(entry.name) || /^çıkış kodu: 0(?:\n|$)/.test(result));
+                (!['run_command', 'run_python'].includes(entry.name) || /^çıkış kodu: 0\b/.test(result));
               if (entry.needsApproval && success) changes++;
               this.onEvent({ type: 'result', name: entry.name, result });
               return result;
@@ -144,7 +145,10 @@ export class ToolRuntime {
       }
     }
     const result = await this.request('execute', { name: entry.name, args, stamp: preview?.stamp }, signal);
-    if (command && (/^çıkış kodu: (?!0\b)/.test(result) || result.includes('ancak stderr\'de hata mesajı var'))) {
+    // Only a non-zero exit code is a failure. Exit 0 with stderr output keeps the bridge's own note about it,
+    // but is not called failed: that told the model that a successful "git clone" or "npm install" had failed
+    // and kept an earlier failed command blocked although the situation had changed.
+    if (command && /^çıkış kodu: (?!0\b)/.test(result)) {
       failedCommands.set(key, changes);
       return result + '\nKomut başarısız. Aynı komutu tekrarlamadan önce nedenini düzelt.';
     }

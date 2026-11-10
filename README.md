@@ -104,7 +104,7 @@ Umay sitesinde bu komutlar Umay'ın sunucusunda çalışır; API anahtarı ise y
 
 ### Ekler ve GitHub
 
-`/ekle` metin ve kod dosyalarını, `.docx`, `.xlsx` ve `.pptx` belgelerinin metnini kabul eder (60.000 karaktere kadar). PDF okunamaz. Görseller şimdilik reddedilir, çünkü Umay API görselleri işlemiyor ([API gözlemleri](docs/API-GOZLEMLERI.md)); Umay destek eklerse `UMAY_IMAGES=1` ile açılabilir.
+`/ekle` metin ve kod dosyalarını, `.docx`, `.xlsx` ve `.pptx` belgelerinin metnini kabul eder (60.000 karaktere kadar). Metin dosyaları UTF-8 değilse Windows-1254 (Excel'in CSV dışa aktarımı) veya UTF-16 (Windows PowerShell çıktısı) olarak okunur. PDF okunamaz. Görseller şimdilik reddedilir, çünkü Umay API görselleri işlemiyor ([API gözlemleri](docs/API-GOZLEMLERI.md)); Umay destek eklerse `UMAY_IMAGES=1` ile açılabilir.
 
 `/github kullanici/depo` veya tam adres, depoyu `git clone --depth 1` ile çalışma klasörüne indirir, o klasöre geçer ve dosya ağacıyla README'yi sonraki mesaja ekler. Yalnızca herkese açık GitHub depoları içe aktarılır.
 
@@ -145,6 +145,8 @@ Araçlar, yerel modellerle çalışan [Gambit AI CLI](https://github.com/cekYc/g
 | `run_python` | Python kodu çalıştırır | Evet |
 
 - Onay kutusunda `e` o işlemi, `t` o araç için oturumun geri kalanını onaylar; `h` reddeder.
+- Onay sorusunu yalnızca soru göründükten sonra yazılan satır yanıtlar; önceden yazılmış satırlar onay sayılmaz.
+- Bir tur yarıda kesilirse (Ctrl+C, bağlantı veya sunucu hatası) tamamlanan adımlar ve sonuçları sohbette kalır; "devam et" yazınca Umay kaldığı yerden sürdürür.
 - Önizlemeden sonra değişmiş bir dosyaya yazılmaz; dışarıdan değişmiş bir dosya geri alınmaz.
 - `UMAY_PROTECTED_DIRS` ile verilen klasörlere yazma araçları dokunamaz.
 - Komut ve Python araçları işletim sistemi düzeyinde yalıtılmış (sandbox) değildir. Neyin çalışacağı önizlemede gösterilir; onaylamadan önce oku.
@@ -163,6 +165,8 @@ umay --prompt "/rapor kitap listesi" --cwd C:\raporlar
 Yanıt standart çıktıya, araç ilerlemesi hata çıktısına yazılır; hata olursa çıkış kodu 1'dir. Bu modda yazma ve komutlar reddedilir, `--yes` ile açıkça izin verilir.
 
 Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-stream`, `--no-tools`, `--tool-mode text|native`, `--cwd <klasör>`, `--system <metin>`, `--timeout <sn>`, `--max-steps <n>`, `--yes`, `--base-url <url>`.
+
+`--timeout`, sunucudan hiç veri gelmeden beklenecek en uzun süredir (varsayılan 120 sn). Yanıt akarken, araçlar çalışırken ve onay beklenirken süre işlemez; uzun bir yanıt veya çok adımlı bir görev bu yüzden kesilmez. Akış kapalıyken (`--no-stream`) her isteğin tamamı bu sürede bitmelidir.
 
 ## Ortam değişkenleri
 

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, access, rm, mkdir } from 'node:fs/promise
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { ToolRuntime } from '../src/tools.mjs';
 import { chat } from '../src/client.mjs';
 import { parseToolCalls, visibleFilter } from '../src/texttools.mjs';
@@ -99,6 +100,68 @@ test('parser does not cut a call that is broken in the middle', () => {
   assert.match(unterminated.calls[0].error, /okunamadı/);
 });
 
+test('lines of only a code fence or "#" are content inside an argument, decoration only around the call', () => {
+  // Raw line breaks inside the JSON string, as models write them for file content.
+  const markdown = '# Başlık\n#\n```python\nprint(1)\n```\nson';
+  const json = parseToolCalls(`<tool_call>\n\`\`\`json\n{"name": "write_file", "arguments": {"path": "a.md", "content": "${markdown}"}}\n\`\`\`\n</tool_call>`);
+  assert.deepEqual(json.calls[0], { name: 'write_file', args: { path: 'a.md', content: markdown } });
+  const python = parseToolCalls('<tool_call>\n##\nwrite_file(path="a.py", content="""#\n# Not\n#\nx = 1\n""")\n</tool_call>');
+  assert.deepEqual(python.calls[0].args, { path: 'a.py', content: '#\n# Not\n#\nx = 1\n' });
+});
+
+test('call syntax keeps the backslash of Windows paths and regular expressions', () => {
+  const file = parseToolCalls(String.raw`<tool_call>read_file(path="C:\Users\eray\dosya.txt")</tool_call>`);
+  assert.equal(file.calls[0].args.path, String.raw`C:\Users\eray\dosya.txt`);
+  const search = parseToolCalls(String.raw`<tool_call>search_files(pattern="\d+\.\d+", path='it\'s')</tool_call>`);
+  assert.deepEqual(search.calls[0].args, { pattern: String.raw`\d+\.\d+`, path: "it's" });
+});
+
+// The shapes below are from the benchmark logs of 9-10 Nov 2026 (Umay Hızlı wrote most of them).
+test('arguments written in the wrong place are put where the tool expects them', () => {
+  const tools = [
+    { name: 'read_file', parameters: { properties: { path: {}, start_line: {}, max_lines: {} }, required: ['path'] } },
+    { name: 'list_dir', parameters: { properties: { path: {}, pattern: {}, recursive: {} }, required: [] } },
+    { name: 'edit_file', parameters: { properties: { path: {}, old_text: {}, new_text: {} }, required: ['path', 'old_text', 'new_text'] } },
+    { name: 'run_command', parameters: { properties: { command: {}, timeout: {} }, required: ['command'] } },
+    { name: 'run_python', parameters: { properties: { code: {}, timeout: {} }, required: ['code'] } },
+  ];
+  const read = text => parseToolCalls(`<tool_call>\n${text}\n</tool_call>`, tools).calls[0];
+  // The one required argument as a bare string, other arguments beside it.
+  assert.deepEqual(read('{"name":"read_file","arguments":"README.md"}'), { name: 'read_file', args: { path: 'README.md' } });
+  assert.deepEqual(read('{"name": "run_command", "arguments": "Get-ChildItem -Recurse", "timeout": 60}'),
+    { name: 'run_command', args: { command: 'Get-ChildItem -Recurse', timeout: 60 } });
+  assert.deepEqual(read('{"name":"list_dir","arguments":"gelen","pattern":"*","recursive":true}'),
+    { name: 'list_dir', args: { path: 'gelen', pattern: '*', recursive: true } });
+  assert.deepEqual(read('{"name":"run_python","arguments":"code:\\nimport os\\nprint(1)","timeout":30}'),
+    { name: 'run_python', args: { code: 'import os\nprint(1)', timeout: 30 } });
+  // Arguments beside "arguments", or with no "arguments" at all.
+  assert.deepEqual(read('{"name":"run_command","arguments":{"command":"npm test"},"timeout":300}').args, { command: 'npm test', timeout: 300 });
+  assert.deepEqual(read('{"name":"read_file","path":"a.txt","max_lines":5}').args, { path: 'a.txt', max_lines: 5 });
+  // The object closed early and continued in a new one.
+  assert.deepEqual(read('{"name":"read_file","arguments":{"path":"a.py"},{"max_lines":200}}').args, { path: 'a.py', max_lines: 200 });
+  assert.deepEqual(read('{"name":"run_python","arguments":{"code":"print(1)"}\n{"timeout": 10}').args, { code: 'print(1)', timeout: 10 });
+  assert.deepEqual(read('{"name":"edit_file","arguments":{"path":"t.py","old_text":"a"},{"new_text":"b = \\"1\\""}}').args,
+    { path: 't.py', old_text: 'a', new_text: 'b = "1"' });
+  // The braces of the inner object left out.
+  assert.deepEqual(read('{"name":"run_command","arguments":"command":"node test.js","timeout":30}').args, { command: 'node test.js', timeout: 30 });
+  // Not guessed: a second value for the same key, a value that swallowed the next key, more than a path.
+  assert.match(read('{"name":"read_file","arguments":{"path":"a.py"},{"path":"b.py"}}').error, /okunamadı/);
+  assert.match(read('{"name":"run_python","arguments":{"code":"print(1)\\",\\"timeout":60}}').error, /okunamadı/);
+  assert.match(read('{"name":"read_file","arguments":"a.py\\n,max_lines:20"}').error, /okunamadı/);
+  assert.match(read('{"name":"edit_file","arguments":"t.py"}').error, /okunamadı/, 'several required arguments: no guess');
+  // Without the tool list nothing is moved.
+  assert.match(parseToolCalls('<tool_call>{"name":"read_file","arguments":"README.md"}</tool_call>').calls[0].error, /okunamadı/);
+});
+
+test('calls that did not run are reported instead of dropped silently', () => {
+  const cut = parseToolCalls('Okuyorum.\n<tool_call>\n');
+  assert.equal(cut.calls.length, 1);
+  assert.match(cut.calls[0].error, /boş ya da yarım/);
+  const many = parseToolCalls('<tool_call>{"name": "list_dir", "arguments": {}}</tool_call>'.repeat(10));
+  assert.equal(many.calls.filter(call => !call.error).length, 8);
+  assert.match(many.calls.at(-1).error, /en fazla 8/);
+});
+
 test('visible filter hides tool markup split across chunks', () => {
   const shown = [];
   const filter = visibleFilter(text => shown.push(text));
@@ -159,6 +222,103 @@ test('text-mode writes still need approval', async t => {
   await assert.rejects(access(path.join(cwd, 'x.txt')));
   assert.match(lastUser(bodies[1]), /reddetti/);
   assert.equal(result.text, 'Yazma reddedildi.');
+});
+
+test('a made-up tool name such as "constructor" is an unknown tool, not a crash', async t => {
+  const { runtime } = await setup(t);
+  const { baseURL, bodies } = await textServer(t, bodies => bodies.length === 1
+    ? '<tool_call>{"name": "constructor", "arguments": {}}</tool_call>' : 'Tamam.');
+  const result = await chat({ apiKey: 'mock', baseURL, runtime, toolMode: 'text', stream: false,
+    messages: [{ role: 'user', content: 'x' }] });
+  assert.match(lastUser(bodies[1]), /Bilinmeyen araç: constructor/);
+  assert.equal(result.text, 'Tamam.');
+});
+
+test('a turn that fails midway hands back its finished steps, so the conversation can continue', async t => {
+  const { runtime, cwd } = await setup(t);
+  await writeFile(path.join(cwd, 'not.txt'), 'içerik');
+  const bodies = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    bodies.push(JSON.parse(raw));
+    if (bodies.length > 1) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":{"message":"x"}}'); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant',
+      content: '<tool_call>{"name": "read_file", "arguments": {"path": "not.txt"}}</tool_call>' }, finish_reason: 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  await assert.rejects(chat({ apiKey: 'mock', baseURL: `http://127.0.0.1:${server.address().port}/v1`, runtime, toolMode: 'text',
+    stream: false, messages: [{ role: 'user', content: 'Oku ve özetle' }] }), error => {
+    assert.equal(error.toolActivity, true);
+    assert.deepEqual(error.partialMessages.map(message => message.role), ['assistant', 'user', 'assistant']);
+    assert.match(error.partialMessages[0].content, /read_file/);
+    assert.match(error.partialMessages[1].content, /<tool_result name="read_file">[\s\S]*içerik/);
+    assert.match(error.partialMessages[2].content, /kesildi/);
+    return true;
+  });
+});
+
+test('a turn stopped during an approval records that the call did not finish', async t => {
+  const abort = new AbortController();
+  const { runtime, cwd } = await setup(t, { confirm: async () => { abort.abort(); return false; } });
+  const { baseURL } = await textServer(t, () =>
+    '<tool_call>{"name": "list_dir", "arguments": {}}</tool_call><tool_call>{"name": "write_file", "arguments": {"path": "x.txt", "content": "veri"}}</tool_call>');
+  await assert.rejects(chat({ apiKey: 'mock', baseURL, runtime, toolMode: 'text', stream: false, signal: abort.signal,
+    messages: [{ role: 'user', content: 'Yaz' }] }), error => {
+    assert.equal(error.name, 'AbortError');
+    assert.match(error.partialMessages[1].content, /<tool_result name="list_dir">[\s\S]*<tool_result name="write_file">\nTur kesildi/);
+    return true;
+  });
+  await assert.rejects(access(path.join(cwd, 'x.txt')));
+});
+
+test('waiting for an approval does not count towards the time limit', async t => {
+  const { runtime, cwd } = await setup(t, { confirm: async () => { await new Promise(resolve => setTimeout(resolve, 600)); return true; } });
+  const { baseURL } = await textServer(t, bodies => bodies.length === 1
+    ? '<tool_call>{"name": "write_file", "arguments": {"path": "x.txt", "content": "veri"}}</tool_call>' : 'Yazıldı.');
+  const result = await chat({ apiKey: 'mock', baseURL, runtime, toolMode: 'text', stream: false, timeout: 300,
+    messages: [{ role: 'user', content: 'Yaz' }] });
+  assert.equal(result.text, 'Yazıldı.');
+  assert.equal(await readFile(path.join(cwd, 'x.txt'), 'utf8'), 'veri');
+});
+
+test('CLI: after a turn that failed midway, "devam et" continues with what was done; failed commands are marked', async t => {
+  const { cwd } = await setup(t);
+  await writeFile(path.join(cwd, 'not.txt'), 'içerik');
+  const call = (name, args) => `<tool_call>${JSON.stringify({ name, arguments: args })}</tool_call>`;
+  const bodies = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    bodies.push(JSON.parse(raw));
+    if (bodies.length === 2) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":{"message":"x"}}'); return; }
+    const content = bodies.length === 1 ? call('read_file', { path: 'not.txt' })
+      : bodies.length === 3 ? call('run_python', { code: 'import sys; sys.exit(3)' }) : 'Bitti.';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const child = spawn(process.execPath, ['src/cli.mjs', '--no-stream', '--yes', '--cwd', cwd, '--base-url', `http://127.0.0.1:${server.address().port}/v1`],
+    { env: { ...process.env, UMAY_API_KEY: 'mock', NO_COLOR: '1', UMAY_SETTINGS: path.join(cwd, 'ayarlar.json'), UMAY_INTERACTIVE: '1', UMAY_THINKING: '' } });
+  let stdout = '', stderr = '';
+  child.stdout.setEncoding('utf8').on('data', data => stdout += data);
+  child.stderr.setEncoding('utf8').on('data', data => stderr += data);
+  child.stdin.end('not.txt dosyasını oku ve özetle\ndevam et\n/cikis\n');
+  await once(child, 'close');
+  assert.equal(bodies.length, 4, stderr);
+  assert.match(stdout, /sohbette duruyor/);
+  const sent = bodies[2].messages.filter(message => message.role !== 'system');
+  assert.deepEqual(sent.map(message => message.role), ['user', 'assistant', 'user', 'assistant', 'user']);
+  assert.match(sent[1].content, /read_file/);
+  assert.match(sent[2].content, /<tool_result name="read_file">[\s\S]*içerik/);
+  assert.equal(sent[4].content, 'devam et');
+  assert.match(stderr, /✗ çıkış kodu: 3/, 'a non-zero exit code is not shown with a check mark');
+  assert.match(stdout, /Bitti\./);
 });
 
 test('text-mode agent stops at its step bound with completed results kept', async t => {

@@ -142,6 +142,8 @@ function runs(text, extra = {}) {
 function docxTable(rows) {
   const cells = rows.map(row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim()))
     .filter(row => !row.every(cell => /^:?-{2,}:?$/.test(cell)));
+  // Only a separator line ("|---|---|"): there is no table to draw.
+  if (!cells.length) return null;
   const count = Math.max(...cells.map(row => row.length));
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -169,7 +171,8 @@ export function markdownToDocx(markdown) {
     } else if (line.trimStart().startsWith('|')) {
       const rows = [line];
       while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('|')) rows.push(lines[++i]);
-      children.push(docxTable(rows), new Paragraph({ text: '' }));
+      const table = docxTable(rows);
+      if (table) children.push(table, new Paragraph({ text: '' }));
     } else if ((match = /^(#{1,6})\s+(.*)$/.exec(line))) {
       const level = match[1].length;
       if (level === 1 && firstTitle) {
@@ -242,6 +245,16 @@ const sheetName = (name, used) => {
   return candidate;
 };
 
+// A number the model wrote as text ("12,5") becomes a number. Codes stay text: with a leading zero (06100,
+// 0532...) or more than 15 digits (card numbers) the conversion would change them. One such value marks its
+// whole column as codes, so a postal code column does not end up half text, half number.
+const NUMBER_TEXT = /^-?\d+(?:[.,]\d+)?$/;
+const CODE_TEXT = /^(?:0\d+|\d{16,})$/;
+function cellValue(value, code) {
+  if (!code && typeof value === 'string' && NUMBER_TEXT.test(value.trim())) return Number(value.trim().replace(',', '.'));
+  return typeof value === 'number' || typeof value === 'string' ? value : value == null ? null : String(value);
+}
+
 export async function buildXlsx(data, file) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Umay AI';
@@ -264,13 +277,18 @@ export async function buildXlsx(data, file) {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + DARK_RED } };
       cell.alignment = { vertical: 'middle', wrapText: true };
     });
-    sheet.rows.forEach((row, r) => {
+    const codes = sheet.columns.map((_, c) => sheet.rows.some(row => typeof row[c] === 'string' && CODE_TEXT.test(row[c].trim())));
+    const values = sheet.rows.map(row => row.map((value, c) => cellValue(value, codes[c])));
+    const numbersOf = c => values.map(row => row[c]).filter(value => typeof value === 'number');
+    // A column of years (2023, 2024) is shown without a thousands separator (not "2.024") and is not summed.
+    const years = sheet.columns.map((_, c) => numbersOf(c).length > 0
+      && numbersOf(c).every(value => Number.isInteger(value) && value >= 1900 && value <= 2100));
+    values.forEach((row, r) => {
       const excelRow = ws.getRow(4 + r);
       row.forEach((value, c) => {
         const cell = excelRow.getCell(c + 1);
-        const numeric = typeof value === 'string' && /^-?\d+(?:[.,]\d+)?$/.test(value.trim()) ? Number(value.replace(',', '.')) : value;
-        cell.value = typeof numeric === 'number' || typeof numeric === 'string' ? numeric : numeric == null ? null : String(numeric);
-        if (typeof cell.value === 'number') cell.numFmt = Number.isInteger(cell.value) ? '#,##0' : '#,##0.00';
+        cell.value = value;
+        if (typeof value === 'number' && !years[c]) cell.numFmt = Number.isInteger(value) ? '#,##0' : '#,##0.00';
         if (r % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF5F5' } };
       });
     });
@@ -279,8 +297,8 @@ export async function buildXlsx(data, file) {
       const totals = ws.getRow(last + 1);
       totals.getCell(1).value = 'TOPLAM';
       sheet.columns.forEach((_, c) => {
-        const numbers = sheet.rows.map((_, r) => ws.getRow(4 + r).getCell(c + 1).value).filter(value => typeof value === 'number');
-        if (c === 0 || !numbers.length) return;
+        const numbers = numbersOf(c);
+        if (c === 0 || !numbers.length || years[c]) return;
         const letter = ws.getColumn(c + 1).letter;
         // The cached result lets viewers that do not recalculate still show the total.
         totals.getCell(c + 1).value = { formula: `SUM(${letter}4:${letter}${last})`, result: numbers.reduce((a, b) => a + b, 0) };

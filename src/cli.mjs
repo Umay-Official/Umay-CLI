@@ -2,7 +2,7 @@
 import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,8 @@ function toggle(arg, current, usage) {
   if (OFF.includes(value)) return false;
   throw new UserError(`Kullanım: ${usage} [ac|kapat]`);
 }
+
+const isDirectory = target => statSync(target, { throwIfNoEntry: false })?.isDirectory() === true;
 
 function loadSettings() {
   try { return JSON.parse(readFileSync(settingsFile, 'utf8')); } catch { return {}; }
@@ -130,6 +132,7 @@ function usage() {
   ${t.redBold('Seçenekler')}
     --model <ad>, --hizli, --dusunme, --dusunme-kapali, --no-stream, --no-tools, --tool-mode text|native,
     --cwd <klasör>, --system <metin>, --timeout <sn>, --max-steps <n>, --yes, --base-url <url>
+    --timeout: sunucudan hiç veri gelmeden beklenecek süre (varsayılan 120 sn); yanıt akarken ve onay beklerken sayılmaz
 
   ${t.redBold('Ortam')}
     UMAY_API_KEY, UMAY_MODEL, UMAY_THINKING, UMAY_BASE_URL, UMAY_PYTHON, UMAY_TOOL_MODE
@@ -172,7 +175,13 @@ function completePath(partial, directoriesOnly) {
 
 // ---------- Input ----------
 
-function ask(rl, prompt, signal) {
+// `fresh` is for approvals: only a line typed after the question appeared may answer it. Lines typed ahead are
+// dropped, since an early "e" would approve a change nobody has seen yet.
+function ask(rl, prompt, signal, { fresh = false } = {}) {
+  if (fresh && rl.queued?.length) {
+    process.stdout.write(`  ${t.dim(`Önceden yazılmış ${rl.queued.length} satır yok sayıldı.`)}\n`);
+    rl.queued.length = 0;
+  }
   // Lines that arrived while no question was waiting (a multi-line paste, piped input).
   if (rl.queued?.length) {
     const line = rl.queued.shift();
@@ -215,7 +224,8 @@ function previewLines(preview) {
 }
 
 function argSummary(args = {}) {
-  const value = args.path ?? args.pattern ?? args.command ?? (args.code ? args.code.split('\n')[0] : '') ?? '';
+  // Arguments come from the model and may have any type.
+  const value = args.path ?? args.pattern ?? args.command ?? String(args.code ?? '').split('\n')[0];
   const text = clean(String(value)).replace(/\s+/g, ' ');
   return text.length > 70 ? text.slice(0, 69) + '…' : text;
 }
@@ -242,6 +252,8 @@ async function main() {
   } });
   if (values.help) { usage(); return; }
   const saved = loadSettings();
+  // null is a real choice here ("otomatik"), so only an unset or unknown value falls through to the saved one.
+  const envThinking = parseThinking(process.env.UMAY_THINKING);
   const config = {
     model: resolveModel(values.model ?? (values.hizli ? 'umay-hizli' : undefined) ?? process.env.UMAY_MODEL ?? saved.model ?? DEFAULT_MODEL),
     baseURL: validateBaseURL(values['base-url'] ?? process.env.UMAY_BASE_URL ?? DEFAULT_BASE_URL),
@@ -249,8 +261,8 @@ async function main() {
     stream: !values['no-stream'] && saved.stream !== false,
     // Older settings files stored thinking: true/false, where false meant "send nothing" (now: otomatik).
     thinking: values.dusunme ? true : values['dusunme-kapali'] ? false
-      : parseThinking(process.env.UMAY_THINKING)
-        ?? (saved.thinkingMode !== undefined ? parseThinking(saved.thinkingMode) ?? null : saved.thinking === true ? true : null),
+      : envThinking !== undefined ? envThinking
+        : saved.thinkingMode !== undefined ? parseThinking(saved.thinkingMode) ?? null : saved.thinking === true ? true : null,
     apiKey: process.env.UMAY_API_KEY?.trim(),
     maxSteps: Number(values['max-steps']),
     toolMode: values['tool-mode'] ?? process.env.UMAY_TOOL_MODE ?? 'text',
@@ -266,6 +278,8 @@ async function main() {
   }
 
   currentDir = path.resolve(values.cwd || process.cwd());
+  // Otherwise the tool bridge fails to start in it and blames the Python installation.
+  if (!isDirectory(currentDir)) throw new Error(`--cwd klasörü bulunamadı: ${currentDir}`);
   let toolsOn = !values['no-tools'];
   let rl;
   let view;
@@ -330,7 +344,7 @@ async function main() {
           console.error(`  ${t.red('›')} ${t.white(event.name)} ${t.dim(argSummary(event.args))}`);
           return;
         }
-        const bad = /^(Hata:|Kullanıcı)/.test(event.result);
+        const bad = /^(Hata:|Kullanıcı|çıkış kodu: (?!0\b))/.test(event.result);
         const first = clean(event.result.split('\n')[0]);
         console.error(`  ${bad ? t.red('✗') : t.green('✓')} ${t.dim(first.length > width() - 8 ? first.slice(0, width() - 9) + '…' : first)}`);
         if (interactive) spin = spinner('düşünüyor');
@@ -359,7 +373,7 @@ async function main() {
         const terminal = rl ?? createInterface({ input: process.stdin, output: process.stderr });
         if (!rl) terminal.on('SIGINT', () => terminal.close());
         try {
-          const answer = (await ask(terminal, `  ${t.yellow('?')} ${t.white('Onaylıyor musun?')} ${t.dim('[e] evet · [h] hayır · [t] bu araç için hep evet')} ${t.red('❯')} `, signal) ?? '').trim().toLocaleLowerCase('tr');
+          const answer = (await ask(terminal, `  ${t.yellow('?')} ${t.white('Onaylıyor musun?')} ${t.dim('[e] evet · [h] hayır · [t] bu araç için hep evet')} ${t.red('❯')} `, signal, { fresh: true }) ?? '').trim().toLocaleLowerCase('tr');
           return ['e', 'evet', 'y', 'yes'].includes(answer) ? true : answer === 't' ? 'always' : false;
         } finally { if (!rl) terminal.close(); }
       },
@@ -392,10 +406,14 @@ async function main() {
     } catch (error) {
       view.finish();
       showError(friendlyError(error, config.apiKey));
-      if (!error.toolActivity) attachments = used;
-      note(error.toolActivity
-        ? 'Tur kesildi. Yapılan dosya/komut işlemleri korunuyor; /geri-al son dosya değişikliğini geri alır.'
-        : 'Bu mesaj geçmişe eklenmedi. Tekrar gönderebilirsin.');
+      // The finished tool steps stay in the conversation; without them Umay would not know what it already did.
+      if (error.partialMessages?.length) messages = [...pending, ...error.partialMessages];
+      else if (!error.toolActivity) attachments = used;
+      note(error.partialMessages?.length
+        ? 'Tur kesildi. Yapılan işlemler ve sonuçları sohbette duruyor; sürdürmek için "devam et" yaz. /geri-al son dosya değişikliğini geri alır.'
+        : error.toolActivity
+          ? 'Tur kesildi. Yapılan dosya/komut işlemleri korunuyor; /geri-al son dosya değişikliğini geri alır.'
+          : 'Bu mesaj geçmişe eklenmedi. Tekrar gönderebilirsin.');
     } finally { if (view?.thought) lastThought = view.thought; active = undefined; view = undefined; }
   }
 
@@ -571,7 +589,9 @@ async function main() {
             (typeof m.content === 'string' || Array.isArray(m.content)))) {
           throw new UserError('Geçerli bir Umay sohbet dosyası değil.');
         }
-        messages = data.messages.map(({ role, content }) => ({ role, content }));
+        // The saved system message carries the day it was written; the model must see today's date.
+        messages = data.messages.map(({ role, content }) => ({ role, content: role === 'system' && typeof content === 'string'
+          ? content.replace(/Bugünün tarihi: [^.\n]*\./, `Bugünün tarihi: ${todayText}.`) : content }));
         ok(`${messages.filter(m => m.role === 'user').length} mesajlık sohbet yüklendi. Sonraki mesajınla devam eder.`); return;
       }
       case '/cok-satir': {
@@ -612,10 +632,12 @@ async function main() {
         await saveSettings(config);
         ok(`Canlı akış ${config.stream ? 'açık' : 'kapalı'}.`); return;
       case '/anahtar': {
+        // Checked before the prompt is closed: a failure after that would end the whole session.
+        if (!process.stdin.isTTY) throw new UserError('Anahtar yalnızca etkileşimli terminalde girilebilir; UMAY_API_KEY ortam değişkenini kullan.');
         rl.close();
-        const key = await readKey();
+        let key;
+        try { key = await readKey(); } finally { rl = makeInterface(); }
         if (key) config.apiKey = key;
-        rl = makeInterface();
         ok(key ? 'Anahtar güncellendi.' : 'Anahtar değiştirilmedi.'); return;
       }
       case '/ekle': {
@@ -656,14 +678,15 @@ async function main() {
         if (arg) {
           const target = path.resolve(currentDir, arg);
           if (runtime) currentDir = await runtime.changeDirectory(target);
-          else if (existsSync(target)) currentDir = target;
+          else if (isDirectory(target)) currentDir = target;
           else throw new UserError(`Klasör bulunamadı: ${target}`);
         }
         console.log(`  ${t.white('Klasör:')} ${fileLink(currentDir)}`); return;
       case '/araclar':
         if (['text', 'native'].includes(arg)) config.toolMode = arg;
         else if (arg) toolsOn = toggle(arg, toolsOn, '/araclar');
-        if (toolsOn) await ensureRuntime();
+        // If the bridge cannot start, the tools are off; saying "on" would send chats without them silently.
+        if (toolsOn) { try { await ensureRuntime(); } catch (error) { toolsOn = false; throw error; } }
         console.log(`  ${t.white('Araçlar:')} ${toolsOn ? t.green('açık') : 'kapalı'}${toolsOn ? t.dim(` · ${runtime.metadata.tools.map(tool => tool.name).join(', ')}`) : ''}`);
         return;
       case '/oto':
@@ -710,9 +733,11 @@ ${rule('Son düşünce')}`);
     const cancel = () => { abort.abort(); active?.abort(); };
     process.on('SIGINT', cancel);
     try {
-      const kind = /^\/(\S+)/.exec(prompt.trim())?.[1];
-      if (kind && GENERATORS[kind]) {
-        const result = await runGenerator(kind, prompt.trim().slice(kind.length + 1).trim());
+      // Looked up like a typed command, so /şema, /excel and /belge work here as they do in the chat.
+      const typed = /^\/\S+/.exec(prompt.trim())?.[0];
+      const kind = typed && LOOKUP.get(typed.toLowerCase())?.kind;
+      if (kind) {
+        const result = await runGenerator(kind, prompt.trim().slice(typed.length).trim());
         if (!process.stdout.isTTY) console.log(result.files.join('\n'));
         return;
       }

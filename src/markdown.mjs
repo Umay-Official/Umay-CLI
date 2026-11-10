@@ -172,14 +172,25 @@ export function styleText(source, state = {}, base = 'p') {
   };
   const flush = () => { text += paintSegment(segment); segment = ''; };
   const link = /^\[([^\]]+)\]\((\S+?)\)/;
+  // Asterisks start emphasis only at the start of a word and directly before text. Elsewhere they are part of
+  // the text and must stay visible: 17*23, 2**10, *.py, a * b.
+  const opens = i => {
+    let from = i;
+    let to = i;
+    while (source[from - 1] === '*') from--;
+    while (source[to] === '*') to++;
+    return !/[\p{L}\p{N}]/u.test(source[from - 1] ?? '') && /[\p{L}\p{N}"'“‘(\[{<`]/u.test(source[to] ?? '');
+  };
   for (let i = 0; i < source.length; i++) {
     const char = source[i];
     if (char === '`') { flush(); state.code = !state.code; continue; }
     if (!state.code) {
-      if (char === '*' && source[i + 1] === '*') { flush(); state.bold = !state.bold; i++; continue; }
-      if (char === '*' && (state.italic || (i + 1 < source.length && source[i + 1] !== ' '))) {
-        flush(); state.italic = !state.italic; continue;
+      if (char === '*' && source[i + 1] === '*') {
+        if (state.bold || opens(i)) { flush(); state.bold = !state.bold; }
+        else { segment += '**'; plain += '**'; }
+        i++; continue;
       }
+      if (char === '*' && (state.italic || opens(i))) { flush(); state.italic = !state.italic; continue; }
       const match = char === '[' ? link.exec(source.slice(i)) : null;
       if (match) {
         flush();

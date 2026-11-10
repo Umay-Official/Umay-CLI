@@ -35,6 +35,63 @@ class ResponseError extends Error {
   constructor(message, status) { super(message); this.statusCode = status; }
 }
 
+// Ends a request when the user cancels it, or when the server has sent nothing for `ms`. The clock runs only
+// while a model request is in flight: every streamed part restarts it and it is held while tools run or wait
+// for approval. A long agent turn, a long answer or a slow reader is therefore not taken for a silent server.
+function watchdog(signal, ms) {
+  const controller = new AbortController();
+  let timer;
+  let running = false; // a model request is in flight
+  let held = 0;        // tools busy inside that request
+  const cancel = () => controller.abort(signal.reason);
+  const disarm = () => { clearTimeout(timer); timer = undefined; };
+  const arm = () => {
+    disarm();
+    if (!running || held) return;
+    timer = setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms);
+  };
+  if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true });
+  return {
+    signal: controller.signal,
+    begin() { running = true; arm(); },
+    touch: arm,
+    end() { running = false; disarm(); },
+    hold() { held++; disarm(); },
+    release() { held--; arm(); },
+    close() { running = false; disarm(); signal?.removeEventListener('abort', cancel); },
+  };
+}
+
+// In native mode the SDK runs the tools inside the request, so the clock is held while any tool is busy.
+function holdDuringTools(tools, watch, onStart) {
+  for (const entry of Object.values(tools)) {
+    const execute = entry.execute;
+    entry.execute = async (...args) => {
+      onStart(); watch.hold();
+      try { return await execute(...args); } finally { watch.release(); }
+    };
+  }
+  return tools;
+}
+
+// Failures that arrive inside an HTTP 200 answer. Umay reports overload and its own time limits this way
+// (9 Nov 2026); they are not a sign of a wrong address or model, so each gets its own message.
+function streamFailure(error, outputStarted) {
+  if (error?.name === 'AI_StreamProviderError' && error.message) {
+    return new ResponseError(`Umay sunucusu hata bildirdi: ${String(error.message).split('\n')[0].slice(0, 300)}`);
+  }
+  if (error?.name === 'AI_InvalidResponseDataError' && /finish reason/i.test(error.message)) {
+    return new ResponseError(outputStarted
+      ? 'Yanıt tamamlanmadan kesildi: sunucu akışı bitirmeden kapattı. Tekrar deneyebilirsin.'
+      : 'Sunucu hiçbir şey göndermeden bağlantıyı kapattı. Umay tarafında yoğunluk olabilir; biraz sonra tekrar dene.');
+  }
+  const cause = error?.cause;
+  if (error?.name === 'AI_APICallError' && (cause?.message === 'terminated' || /ECONNRESET|UND_ERR_SOCKET|EPIPE/.test(`${cause?.code} ${cause?.cause?.code}`))) {
+    return new ResponseError('Bağlantı yanıt tamamlanmadan koptu. İnternet bağlantını kontrol edip tekrar dene.');
+  }
+  return error;
+}
+
 export function friendlyError(error, apiKey = '') {
   const status = error?.statusCode;
   let message;
@@ -79,7 +136,8 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
   runtime, maxSteps = 25, toolMode = 'native', thinking = null, onReasoning = () => {}, includeUsage = false }) {
   baseURL = validateBaseURL(baseURL);
   if (!apiKey?.trim()) throw new Error('API anahtarı gerekli.');
-  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
+  const watch = watchdog(signal, timeout);
+  const requestSignal = watch.signal;
   const provider = createOpenAICompatible({
     name: 'umay', baseURL, apiKey, includeUsage,
     // thinking: true/false is sent as enable_thinking (the website's field) and chat_template_kwargs (Qwen-style
@@ -127,10 +185,12 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
     maxRetries: 0,
     onError: () => {},
     stopWhen: isStepCount(runtime && !textMode ? maxSteps : 1),
-    ...(runtime && !textMode ? { tools: runtime.definitions(requestSignal), onToolExecutionStart: () => { sideEffects = true; } } : {}),
+    ...(runtime && !textMode
+      ? { tools: holdDuringTools(runtime.definitions(requestSignal), watch, () => { sideEffects = true; }) } : {}),
   };
   const agent = new ToolLoopAgent(options);
   const conversation = messages.filter(message => message.role !== 'system');
+  // One model request (in native mode: the SDK's whole tool loop).
   const runStep = async (history, show) => {
     const call = { messages: history, abortSignal: requestSignal };
     // Reasoning may arrive as reasoning_content or inside <think> tags; neither is part of the answer.
@@ -138,35 +198,41 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
     const think = text => { thought += text.length; onReasoning(text); };
     const split = thinkSplitter(show, think);
     const begin = performance.now();
-    if (!stream) {
-      const result = await agent.generate(call);
-      if (result.reasoningText) think(result.reasoningText);
-      split.push(result.text);
-      return { result, text: split.end(), ms: performance.now() - begin, thought };
-    }
-    // Reading fullStream ensures errors after partial output are surfaced as errors.
-    const result = await agent.stream(call);
-    let finished = false;
-    // Generation speed is measured from the first streamed token, so waiting in the queue does not count.
-    let first;
-    for await (const part of result.fullStream) {
-      if (part.type === 'error') throw part.error;
-      if (part.type === 'abort') throw requestSignal.reason ?? new DOMException('Aborted', 'AbortError');
-      if (part.type === 'text-delta') { first ??= performance.now(); split.push(part.text); }
-      if (part.type === 'reasoning-delta') { first ??= performance.now(); think(part.text); }
-      if (part.type === 'finish-step') {
-        if (part.finishReason === 'error') throw new ResponseError('Yanıt akışı sunucu hatasıyla kesildi.');
-        finished = true;
+    watch.begin();
+    try {
+      if (!stream) {
+        const result = await agent.generate(call);
+        if (result.reasoningText) think(result.reasoningText);
+        split.push(result.text);
+        return { result, text: split.end(), ms: performance.now() - begin, thought };
       }
-    }
-    requestSignal.throwIfAborted();
-    if (!finished) throw new ResponseError('API yanıtı tamamlanmadan kesildi.');
-    return { result, text: split.end(), ms: performance.now() - (first ?? begin), thought };
+      // Reading fullStream ensures errors after partial output are surfaced as errors.
+      const result = await agent.stream(call);
+      let finished = false;
+      // Generation speed is measured from the first streamed token, so waiting in the queue does not count.
+      let first;
+      for await (const part of result.fullStream) {
+        watch.touch();
+        if (part.type === 'error') throw part.error;
+        if (part.type === 'abort') throw requestSignal.reason ?? new DOMException('Aborted', 'AbortError');
+        if (part.type === 'text-delta') { first ??= performance.now(); split.push(part.text); }
+        if (part.type === 'reasoning-delta') { first ??= performance.now(); think(part.text); }
+        if (part.type === 'finish-step') {
+          if (part.finishReason === 'error') throw new ResponseError('Yanıt akışı sunucu hatasıyla kesildi.');
+          finished = true;
+        }
+      }
+      requestSignal.throwIfAborted();
+      if (!finished) throw new ResponseError('API yanıtı tamamlanmadan kesildi.');
+      return { result, text: split.end(), ms: performance.now() - (first ?? begin), thought };
+    } finally { watch.end(); }
   };
+  // Text mode: the steps finished before a failure, so an interrupted turn can stay in the conversation.
+  const partial = [];
   try {
     if (textMode) {
       const result = await runTextTools({ runtime, signal: requestSignal, maxSteps, conversation, runStep, onText,
-        onToolStart: () => { sideEffects = true; } });
+        history: partial, onToolStart: () => { sideEffects = true; } });
       return { ...result, stats: { ...result.stats, streamed: stream } };
     }
     const { result, text, ms, thought } = await runStep(conversation, onText);
@@ -177,10 +243,15 @@ async function chatOnce({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MO
     const usage = await result.usage;
     return { text, usage, finishReason, messages: history, stepLimit, stats: { ...stepStats(usage, ms), streamed: stream } };
   } catch (error) {
-    const failure = requestSignal.aborted ? requestSignal.reason : error;
-    if (failure && typeof failure === 'object') { failure.toolActivity = sideEffects; failure.outputStarted = outputStarted; }
+    const failure = requestSignal.aborted ? requestSignal.reason : streamFailure(error, outputStarted);
+    if (failure && typeof failure === 'object') {
+      failure.toolActivity = sideEffects;
+      failure.outputStarted = outputStarted;
+      // The conversation must not end on tool results: the next user message would follow them directly.
+      if (partial.length) failure.partialMessages = [...partial, { role: 'assistant', content: 'Tur burada kesildi; görev tamamlanmadı.' }];
+    }
     throw failure;
-  }
+  } finally { watch.close(); }
 }
 
 // No answer text: either the length limit was hit, or the reply was all reasoning and stopped before the answer.
@@ -227,9 +298,9 @@ export function thinkSplitter(onContent, onReasoning) {
 }
 
 // Agent loop for the text protocol: run one model step, execute its <tool_call> blocks, send results back.
-async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, onText, onToolStart }) {
+// `history` receives the finished steps as they happen; the caller keeps it when the turn fails midway.
+async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, onText, onToolStart, history = [] }) {
   const tools = runtime.definitions(signal);
-  const history = [];
   // Counts stay undefined when the server reports no usage, so the CLI shows no token total.
   const usage = { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined };
   let stats = { generationMs: 0 };
@@ -242,7 +313,7 @@ async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, 
     for (const key of Object.keys(usage)) {
       if (Number.isFinite(stepUsage?.[key])) usage[key] = (usage[key] ?? 0) + stepUsage[key];
     }
-    const parsed = parseToolCalls(text);
+    const parsed = parseToolCalls(text, runtime.metadata.tools);
     if (!parsed) {
       if (!text.trim()) throw emptyAnswer(await result.finishReason, thought);
       history.push({ role: 'assistant', content: text });
@@ -252,20 +323,30 @@ async function runTextTools({ runtime, signal, maxSteps, conversation, runStep, 
     history.push({ role: 'assistant',
       content: [parsed.before, ...valid.map(formatCall)].filter(Boolean).join('\n\n') || text.trim() });
     const results = [];
-    for (const call of parsed.calls) {
-      signal.throwIfAborted();
-      let result;
-      if (call.error) result = `Hata: ${call.error}`;
-      else if (!tools[call.name]) {
-        result = `Hata: Bilinmeyen araç: ${call.name}. Geçerli araçlar: ${Object.keys(tools).join(', ')}`;
-      } else {
-        onToolStart();
-        result = await tools[call.name].execute(call.args);
+    try {
+      for (const call of parsed.calls) {
+        signal.throwIfAborted();
+        let result;
+        // hasOwn: a made-up name such as "constructor" must not find a method of the object.
+        const known = !call.error && Object.hasOwn(tools, call.name);
+        if (call.error) result = `Hata: ${call.error}`;
+        else if (!known) {
+          result = `Hata: Bilinmeyen araç: ${call.name}. Geçerli araçlar: ${Object.keys(tools).join(', ')}`;
+        } else {
+          onToolStart();
+          result = await tools[call.name].execute(call.args);
+        }
+        if (!known) runtime.onEvent({ type: 'result', name: call.name ?? 'araç', result });
+        results.push({ name: call.name ?? 'hata', result });
       }
-      if (call.error || !tools[call.name]) runtime.onEvent({ type: 'result', name: call.name ?? 'araç', result });
-      results.push({ name: call.name ?? 'hata', result });
+      signal.throwIfAborted();
+    } catch (error) {
+      // Stopped between or inside tools: the calls above are already in the history, so their outcome is too.
+      const pending = parsed.calls.slice(results.length).map(call => ({ name: call.name ?? 'hata',
+        result: 'Tur kesildi; bu çağrı tamamlanmadı. Sonucu bilinmiyor: gerekiyorsa durumu kontrol et.' }));
+      history.push({ role: 'user', content: formatResults([...results, ...pending]) });
+      throw error;
     }
-    signal.throwIfAborted();
     history.push({ role: 'user', content: formatResults(results) });
     if (step >= maxSteps) return { text: parsed.before, usage, finishReason: 'tool-calls', messages: history, stepLimit: true, stats };
   }
