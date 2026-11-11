@@ -8,7 +8,7 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 
 ## Özellikler
 
-- **Sohbet:** Umay Akıllı, Umay Hızlı, Umay Ultra Hızlı ve Umay Daha Zeki modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
+- **Sohbet:** Umay'ın sunduğu tüm modeller (Umay Akıllı, Hızlı, Ultra Hızlı, Daha Zeki ve Mistral Large 4, DeepSeek, MiniMax, GLM gibi açık modeller), canlı yazım akışı, düşünme modu. Model listesi Umay'dan alınır; yeni model eklenince CLI'yi güncellemek gerekmez. `/durum` hangi modelin şu an düzgün yanıt verdiğini gösterir. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
 - **Komut menüsü:** `/` yazınca eşleşen komutlar girdi alanının altında listelenir; ↑↓ seçer, Tab tamamlar, Enter çalıştırır. Komut argümanları (model adları, dosya yolları) da aynı listede çıkar. `/` + Enter tüm komutları gösterir.
 - **Yerel araçlar:** Umay klasördeki dosyaları listeler, okur, arar, düzenler; PowerShell ve Python çalıştırır. Yazma ve komutlar her seferinde onay ister. Araçlar [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden gelir.
 - **Belge üretimi:** `/sunum` (.pptx), `/dokuman` (.docx), `/rapor` (.xlsx), `/sema` (Mermaid .html), `/proje` (HTML/CSS/JS + .zip).
@@ -50,7 +50,13 @@ Kurulum yapmadan denemek için depo klasöründeki `umay.cmd` dosyasına çift t
 
 ## Başlarken
 
-`umay` yazınca Umay API anahtarın sorulur. Anahtarı yapıştırıp Enter'a bas; ekranda görünmez ve diske yazılmaz. Her seferinde girmek istemezsen `UMAY_API_KEY` ortam değişkenini ayarla veya `.env.example` dosyasını `.env` adıyla kopyalayıp doldur (`.env` düz metindir, paylaşma).
+İlk açılışta Umay API anahtarın sorulur. Anahtarı yapıştırıp Enter'a bas; ekranda görünmez. CLI anahtarı Umay'a sorup doğrular ve bu bilgisayarda saklar, sonraki açılışlarda bir daha sormaz:
+
+- **Windows:** Windows'un DPAPI şifrelemesiyle (Kimlik Bilgisi Yöneticisi'nin kullandığı yöntem) şifrelenip `~/.umay/anahtar.dpapi` dosyasına yazılır. Dosya yalnızca senin Windows hesabınla çözülebilir.
+- **macOS:** Anahtar Zinciri'ne (Keychain) kaydedilir.
+- **Linux ve diğerleri:** `~/.umay/anahtar` dosyasına, yalnızca senin okuyabileceğin izinlerle, şifresiz yazılır.
+
+`/anahtar` anahtarı değiştirir, `/anahtar durum` nereden geldiğini gösterir, `/anahtar sil` kayıtlı anahtarı siler. `UMAY_API_KEY` ortam değişkeni (veya `.env` dosyası) ayarlıysa kayıtlı anahtar yerine o kullanılır.
 
 İlk denemeler:
 
@@ -75,11 +81,12 @@ Bu klasördeki dosyaları listele
 | | `/bellek`, `/bellek ekle <not>`, `/bellek sil <no>` | Kalıcı notlar: her sohbette Umay'a hatırlatılır (`temizle`, `ac`, `kapat`) |
 | | `/cok-satir` | Çok satırlı mesaj; `/gonder` gönderir, `/iptal` vazgeçer |
 | | `/cikis` | Çık (Ctrl+D veya boş satırda Ctrl+C da çıkar; satırda yazı varken Ctrl+C satırı temizler) |
-| Model | `/akilli`, `/hizli`, `/model [akilli\|hizli\|ultra\|zeki]` | Umay Akıllı (güçlü), Umay Hızlı (çabuk), Umay Ultra Hızlı veya Umay Daha Zeki |
+| Model | `/model [ad]` | Modelleri listele veya değiştir: `akilli`, `hizli`, `ultra`, `zeki`, `mistral`, `deepseek`, `minimax`, `glm`… Liste Umay'ın `/v1/models` yanıtından gelir; `/akilli` ve `/hizli` kısayoldur |
+| | `/durum` | Her modele düşünme kapalı tek kelimelik bir soru sorar; hangisi çalışıyor, hangisi yavaş, hangisi bozuk yanıt veriyor gösterir |
 | | `/dusunme [ac\|kapat\|otomatik]` | Düşünme: açık en iyi sonucu verir, kapalı hızlıdır, otomatikte Umay karar verir (varsayılan) |
 | | `/dusunce` | Son yanıtın düşüncesini tam göster |
 | | `/akis [ac\|kapat]` | Canlı yazım akışı |
-| | `/anahtar` | API anahtarını değiştir |
+| | `/anahtar [sil\|durum]` | API anahtarını değiştir, kayıtlıysa sil veya nereden geldiğini gör |
 | Dosya ve kod | `/ekle <dosya>`, `/ekler [temizle]` | Sonraki mesaja dosya ekle; bekleyen ekleri gör |
 | | `/github <depo>` | Herkese açık depoyu indir, klasörüne geç, yapısını Umay'a ver |
 | | `/cd [klasör]` | Çalışma klasörü |
@@ -108,7 +115,7 @@ Umay sitesinde bu komutlar Umay'ın sunucusunda çalışır; API anahtarı ise y
 
 ### Ekler ve GitHub
 
-`/ekle` metin ve kod dosyalarını, `.docx`, `.xlsx` ve `.pptx` belgelerinin metnini kabul eder (60.000 karaktere kadar). Metin dosyaları UTF-8 değilse Windows-1254 (Excel'in CSV dışa aktarımı) veya UTF-16 (Windows PowerShell çıktısı) olarak okunur. PDF okunamaz. Görseller şimdilik reddedilir, çünkü Umay API görselleri işlemiyor ([API gözlemleri](docs/API-GOZLEMLERI.md)); Umay destek eklerse `UMAY_IMAGES=1` ile açılabilir.
+`/ekle` metin ve kod dosyalarını, `.docx`, `.xlsx` ve `.pptx` belgelerinin metnini kabul eder (60.000 karaktere kadar). Metin dosyaları UTF-8 değilse Windows-1254 (Excel'in CSV dışa aktarımı) veya UTF-16 (Windows PowerShell çıktısı) olarak okunur. PDF okunamaz. Görseller varsayılan olarak kapalıdır. 11 Kasım 2026'dan beri Umay API görselleri işliyor (istek Umay Hızlı'ya gidiyor, [API gözlemleri](docs/API-GOZLEMLERI.md)); `UMAY_IMAGES=1` ile açılabilir.
 
 `/github kullanici/depo` veya tam adres, depoyu `git clone --depth 1` ile çalışma klasörüne indirir, o klasöre geçer ve dosya ağacıyla README'yi sonraki mesaja ekler. Yalnızca herkese açık GitHub depoları içe aktarılır.
 
@@ -176,8 +183,8 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-s
 
 | Değişken | Açıklama |
 | --- | --- |
-| `UMAY_API_KEY` | API anahtarı |
-| `UMAY_MODEL` | `umay-akilli` (varsayılan), `umay-hizli`, `umay-ultra-hizli` veya `umay-daha-zeki` |
+| `UMAY_API_KEY` | API anahtarı; ayarlıysa bu bilgisayarda kayıtlı anahtarın yerine kullanılır |
+| `UMAY_MODEL` | Model adı veya kısaltması: `umay-akilli` (varsayılan), `hizli`, `ultra`, `mistral`… Umay'ın listesinde olmayan ad için uyarı gösterilir (Umay bilinmeyen adları sessizce Umay Akıllı'ya yönlendirir) |
 | `UMAY_THINKING` | `ac`, `kapat` veya `otomatik` (varsayılan otomatik) |
 | `UMAY_BASE_URL` | API adresi (varsayılan `https://umayzeka.com/v1`; HTTPS zorunlu, yalnızca localhost için HTTP) |
 | `UMAY_PYTHON` | Kullanılacak Python (varsayılan: Windows'ta `python`, diğer sistemlerde `python3`); PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |
@@ -185,8 +192,8 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-s
 | `UMAY_ARAYUZ` | `sade` yazılırsa çerçeveli girdi alanı ve canlı komut menüsü yerine düz `sen ❯` satırı kullanılır (terminal yeni görünümü düzgün çizmiyorsa) |
 | `NO_COLOR` | Ayarlıysa renkler ve çerçeveli arayüz kapanır |
 | `UMAY_PROTECTED_DIRS` | Yazma araçlarına kapalı klasörler; Windows'ta `;`, diğer sistemlerde `:` ile ayrılır |
-| `UMAY_IMAGES` | `1` ise görsel eklemeye izin verir (Umay API şu an görselleri işlemiyor) |
-| `UMAY_SETTINGS` | Tercih dosyasının yolu (varsayılan `~/.umay/ayarlar.json`) |
+| `UMAY_IMAGES` | `1` ise görsel eklemeye izin verir (API 11 Kasım 2026'dan beri görselleri işliyor) |
+| `UMAY_SETTINGS` | Tercih dosyasının yolu (varsayılan `~/.umay/ayarlar.json`); kayıtlı anahtar ve Umay'ın model listesi (`modeller.json`) da aynı klasörde durur |
 
 ## Proje yapısı
 
@@ -199,6 +206,7 @@ src/
   documents.mjs    /sunum /dokuman /rapor /sema /proje üreticileri
   attachments.mjs  /ekle ve /github
   memory.mjs       /bellek: kalıcı notlar
+  keystore.mjs     API anahtarını bu bilgisayarda saklama (DPAPI, Anahtar Zinciri)
   markdown.mjs     Terminalde akan Markdown görünümü
   theme.mjs        Renkler, logo, karşılama paneli, kutular, bekleme animasyonu
   prompt.mjs       Çerçeveli girdi alanı, durum satırı ve canlı komut menüsü

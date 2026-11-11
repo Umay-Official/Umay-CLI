@@ -114,6 +114,74 @@ export function friendlyError(error, apiKey = '') {
   return apiKey ? message.replaceAll(apiKey, '[gizli]') : message;
 }
 
+// Asks the server whether it accepts a key before it is saved. Answers true (accepted), false (refused with
+// 401/403) or null (could not tell: no connection, or an unexpected answer).
+// The request has no messages, so no model runs: Umay checks the key first and answers 401 for a bad one and
+// 400 ("'messages' dizisi zorunludur") for a good one (11 Nov 2026). GET /models is no test: it answers
+// without a key.
+export async function verifyKey({ apiKey, baseURL = DEFAULT_BASE_URL, model = DEFAULT_MODEL, signal } = {}) {
+  baseURL = validateBaseURL(baseURL);
+  try {
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST', redirect: 'manual',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model, messages: [] }),
+      signal: AbortSignal.any([AbortSignal.timeout(20_000), ...(signal ? [signal] : [])]),
+    });
+    await response.body?.cancel();
+    const { status } = response;
+    if (status === 401 || status === 403) return false;
+    return status === 400 || status === 422 || (status >= 200 && status < 300) ? true : null;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return null;
+  }
+}
+
+// The models the server offers, as [{ id, owner }], or null when the list cannot be had. Umay answers
+// GET /models without a key (11 Nov 2026); the key is sent anyway for servers that want one.
+export async function listModels({ apiKey, baseURL = DEFAULT_BASE_URL, signal } = {}) {
+  try {
+    const response = await fetch(`${validateBaseURL(baseURL)}/models`, {
+      redirect: 'manual', headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]),
+    });
+    if (!response.ok || !/json/i.test(response.headers.get('content-type') ?? '')) { await response.body?.cancel(); return null; }
+    const ids = (await response.json())?.data?.filter(item => typeof item?.id === 'string' && item.id.trim())
+      .map(item => ({ id: item.id.trim(), owner: typeof item.owned_by === 'string' ? item.owned_by : '' }));
+    return ids?.length ? ids : null;
+  } catch { return null; }
+}
+
+// One short question to one model, for /durum. Thinking is turned off so the answer is quick; the reply,
+// the model that answered (Umay routes some names to others) and the time are returned, never thrown.
+export async function probeModel({ apiKey, baseURL = DEFAULT_BASE_URL, model, timeout = 60_000, signal }) {
+  const started = Date.now();
+  const body = JSON.stringify({ model, stream: false, enable_thinking: false, chat_template_kwargs: { enable_thinking: false },
+    messages: [{ role: 'user', content: 'Yalnızca şu kelimeyi yaz, başka hiçbir şey yazma: ANKARA' }] });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(`${validateBaseURL(baseURL)}/chat/completions`, {
+        method: 'POST', redirect: 'manual', body,
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        signal: AbortSignal.any([AbortSignal.timeout(Math.max(1000, timeout - (Date.now() - started))), ...(signal ? [signal] : [])]),
+      });
+      // Umay allows three requests a second; a refused one is sent again after a pause.
+      if (response.status === 429 && attempt < 3) { await response.body?.cancel(); await pause(1200 * (attempt + 1), signal); continue; }
+      const text = await response.text();
+      let data; try { data = JSON.parse(text); } catch { /* an HTML error page */ }
+      const seconds = (Date.now() - started) / 1000;
+      if (!response.ok) return { model, seconds, status: response.status, error: data?.error?.message ?? `HTTP ${response.status}` };
+      return { model, seconds, status: response.status, routed: typeof data?.model === 'string' ? data.model : undefined,
+        reply: String(data?.choices?.[0]?.message?.content ?? '') };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const seconds = (Date.now() - started) / 1000;
+      return { model, seconds, error: error?.name === 'TimeoutError' ? 'timeout' : 'connection' };
+    }
+  }
+}
+
 // Servers that reject stream_options are remembered for the session; requests then go without usage.
 let usageRejected = false;
 

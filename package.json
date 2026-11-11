@@ -1,6 +1,6 @@
 {
   "name": "umay-cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Umay yapay zekası için Türkçe terminal uygulaması: sohbet, yerel araçlar, PowerPoint/Word/Excel/şema/web projesi üretimi",
   "keywords": [
@@ -41,7 +41,7 @@
   "scripts": {
     "start": "node src/cli.mjs",
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/client.mjs && node --check src/tools.mjs && node --check src/texttools.mjs && node --check src/theme.mjs && node --check src/prompt.mjs && node --check src/markdown.mjs && node --check src/attachments.mjs && node --check src/documents.mjs && node --check src/memory.mjs && python -B -c \"import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in pathlib.Path('python').glob('*.py')]\""
+    "check": "node --check src/cli.mjs && node --check src/client.mjs && node --check src/tools.mjs && node --check src/texttools.mjs && node --check src/theme.mjs && node --check src/prompt.mjs && node --check src/markdown.mjs && node --check src/attachments.mjs && node --check src/documents.mjs && node --check src/memory.mjs && node --check src/keystore.mjs && python -B -c \"import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in pathlib.Path('python').glob('*.py')]\""
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.87",

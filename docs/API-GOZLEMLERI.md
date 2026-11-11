@@ -1,19 +1,80 @@
 # Umay API Gözlemleri
 
-Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Denemeler 7–9 Kasım 2026'da, Geliştirici & API Paneli'nden alınan ücretsiz bir anahtarla, Windows 11 üzerinde yapıldı. Amaç, Umay ekibine istemci tarafından görünen davranışı aktarmak.
+Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Denemeler 7–9 Kasım 2026'da, Geliştirici & API Paneli'nden alınan ücretsiz bir anahtarla, 11 Kasım'da yüksek kotalı bir anahtarla, Windows 11 üzerinde yapıldı. Amaç, Umay ekibine istemci tarafından görünen davranışı aktarmak.
 
 ## Özet
 
 | Konu | Durum | Not |
 | --- | --- | --- |
 | Sohbet (`/v1/chat/completions`) | ✅ Çalışıyor | JSON ve akış (SSE) yanıtları sorunsuz |
-| Modeller | ✅ | `umay-akilli`, `umay-hizli`; 9 Kasım'dan beri `umay-ultra-hizli`, `umay-daha-zeki` (belgelerde henüz yok) |
+| Modeller | ⚠️ | `/v1/models` 12 ad listeliyor (11 Kasım); `umay-daha-zeki` artık `umay-ultra-hizli`'ye gidiyor |
+| Umay Akıllı (11 Kasım) | ❌ Bozuk | Her istekte anlamsız, çok dilli token yığını; düşünme açıkken boş yanıt |
+| Umay Hızlı (11 Kasım) | ❌ Yanıt yok | Metin isteklerinde 120 sn'de yanıt yok veya Cloudflare `524` |
+| İstek sınırı | ⚠️ | Saniyede en fazla 3 istek (anahtar ve IP başına); `429`, `Retry-After` yok |
 | Bilinmeyen model adı | ⚠️ Hata vermiyor | İstek sessizce `umay-akilli`'ye gidiyor |
 | Yeni modellerin hızı | ⚠️ Çok yavaş | İlk token 10–120 sn; ~2 dakikada gelmezse akış boş kapanıyor |
 | Düşünme modu | ✅ Çalışıyor | `enable_thinking` ile `reasoning_content` geliyor |
 | Yerleşik araç çağrısı (`tools`) | ❌ Kullanılmıyor | Model `tool_calls` döndürmüyor; CLI metin protokolüyle çözdü |
-| Görseller | ❌ İşlenmiyor | İstek hata vermiyor ama Akıllı da Hızlı da görseli görmüyor |
+| Görseller | ✅ 11 Kasım'dan beri çalışıyor | Görselli istek `umay-hizli`'ye yönlendiriliyor; Mistral Large 4 de görüyor |
+| `max_tokens`, `stop`, `n`, `logprobs`, `response_format`, `seed` | ❌ Yok sayılıyor | İstek hata vermiyor, alanlar etkisiz |
 | Yapılandırılmış çıktı (JSON, Markdown) | ✅ Güvenilir | Belge komutları çoğunlukla ilk denemede doğru biçimde |
+
+## 11 Kasım 2026 denemeleri
+
+Yüksek kotalı bir anahtarla, istekler arası en az 450 ms bırakılarak yapıldı. Saatler UTC.
+
+### Model listesi
+
+`GET /v1/models` artık JSON liste döndürüyor (önceden ana sayfa HTML'i geliyordu) ve **anahtar istemiyor**: anahtarsız veya yanlış anahtarla da `200`. `/api/v1/models` aynı listeyi veriyor.
+
+| Listede | Yanıttaki `model` | Durum (11 Kasım, 17:50–18:05) |
+| --- | --- | --- |
+| `umay-akilli` | `umay-akilli` | ❌ Anlamsız çıktı (aşağıda) |
+| `umay-hizli` | `umay-hizli` | ❌ Metinde 60 sn'den fazla, çoğunlukla zaman aşımı veya `524`; görselli istekte 43 sn'de doğru yanıt |
+| `umay-ultra-hizli` | `umay-ultra-hizli` | ✅ 0,6–1,5 sn; düşünme açıkken 12–20 sn ama `reasoning_content` gelmiyor |
+| `umay-daha-zeki` | `umay-ultra-hizli` | ⚠️ Ayrı model değil, Ultra Hızlı'ya gidiyor |
+| `umay-mistral-large`, `mistralai/mistral-large-4-1t-a52b` | `mistralai/mistral-large-4-1t-a52b` | ✅ 2–35 sn |
+| `umay-deepseek-flash`, `deepseek-ai/deepseek-v4.1-flash` | `deepseek-ai/deepseek-v4.1-flash` | ⚠️ Doğru ama ~88 sn |
+| `umay-glm-flash`, `z-ai/glm-5.3-flash` | `z-ai/glm-5.3-flash` | ⚠️ ~88 sn veya 90 sn'de zaman aşımı |
+| `umay-minimax-flash`, `minimaxai/minimax-m3.1-flash` | — | ❌ 90 sn'de zaman aşımı |
+
+Listede olmayan bir ad (`yok-boyle-bir-model`) hâlâ hata vermeden `umay-akilli`'ye gidiyor; o gün o da bozuk çıktı verdi.
+
+### Umay Akıllı bozuk çıktı veriyor
+
+"Tek kelimeyle cevap ver: Türkiye'nin başkenti?" sorusuna 17:50–18:02 arasında yapılan her istekte `200` ve `finish_reason: "stop"` ile anlamsız metin geldi. Örnek: `‑ végétUSTOMARNING_{\Ker}\,\бо‑_{\,\prote-…`. Düşünme kapalı, açık veya gönderilmemiş fark etmedi; açıkken içerik çoğunlukla boştu (`completion_tokens: 0`). Aynı soruya Ultra Hızlı ve Mistral "Ankara" dedi. Görünüş, sunucuda modelin yanlış tokenizer'la ya da bozuk ağırlıkla çalıştığını düşündürüyor. CLI'nin varsayılan modeli Akıllı olduğu için kullanıcılar şu an anlamsız yanıt görüyor. Aynı saatlerde sitede de (umayzeka.com, Umay Akıllı, Derin Düşünme açık) "selam nasılsın" mesajına 1,7 sn düşünüp boş yanıt verdi; sorun API'ye ya da istemciye özgü değil.
+
+### İstek sınırı
+
+Aynı anda 6 istek gönderilince 3'ü `429` aldı: `"Ani istek patlaması (burst) sınırı aşıldı. Tek bir saniyede en fazla 3 istek gönderebilirsiniz."` İkinci bir kod da var: `ip_rate_limit_exceeded`. Yanıtta `Retry-After` veya `X-RateLimit-*` başlığı yok. `GET /v1/models` bu sınıra takılmadı.
+
+### Kimlik doğrulama sırası
+
+Sunucu anahtarı gövdeden önce kontrol ediyor: `messages: []` ile yapılan istek yanlış anahtarda `401` (`"Geçersiz veya iptal edilmiş Umay API Anahtarı."`), doğru anahtarda `400` (`"'messages' dizisi zorunludur."`) alıyor ve model çalışmıyor. CLI anahtarı kaydetmeden önce bu istekle doğruluyor.
+
+### İstek alanları
+
+Ultra Hızlı ile denendi:
+
+| Alan | Sonuç |
+| --- | --- |
+| `max_tokens: 5` | Yok sayıldı, 76 token geldi |
+| `stop: ["5"]` | Yok sayıldı, 10'a kadar saydı |
+| `n: 2` | Tek seçenek geldi |
+| `response_format: json_object` | Yok sayıldı; JSON Markdown kod bloğunda geldi |
+| `response_format: json_schema` (strict) | Yok sayıldı; düz metin geldi |
+| `tools`, `tool_choice: "required"` | Yok sayıldı; `tool_calls` yok (Mistral'da da) |
+| `logprobs`, `top_logprobs` | Yok sayıldı |
+| `temperature: 0`, `seed: 7` | Aynı istek iki farklı yanıt verdi |
+| Sistem mesajı | Uyuluyor ("adın Bora" ve gizli kelime denemeleri doğru); karmaşık biçim kurallarına zayıf uyum |
+| Önceki konuşma (`assistant` mesajı) | Uyuluyor; `prompt_tokens` yine yalnızca son mesajı sayıyor |
+| `image_url` (base64 PNG) | Çalışıyor; CLI'nin bir ekran görüntüsündeki komutlar doğru okundu |
+
+### Diğer adresler
+
+`/v1/completions`, `/v1/embeddings`, `/v1/responses`, `/v1/images/generations`, `/v1/audio/speech`, `/v1/usage`, `/v1/models/{id}` ve `/v1` `200` ile sitenin HTML sayfasını döndürüyor; bu uç noktalar yok. Bir istemci bunları `404` yerine başarılı yanıt sanabilir.
+
+**Öneri:** Akıllı'nın sunumunun kontrol edilmesi; Hızlı ve açık modellerin süre sorunlarının giderilmesi; `umay-daha-zeki`'nin ayrı model olmadığının duyurulması; desteklenmeyen alanlar için `400`; `429` yanıtına `Retry-After`; olmayan adreslere `404` JSON; `/v1/models`'in anahtar istemesi ya da bunun bilinçli olduğunun belgelenmesi.
 
 ## Uç nokta ve kimlik doğrulama
 
@@ -87,6 +148,8 @@ Hız, 9 Kasım 03:30–03:45 arasında art arda gönderilen tek tek isteklerle �
 
 ## Görseller
 
+> **11 Kasım 2026:** Görseller artık API'de çalışıyor; aşağıdaki gözlemler 7–9 Kasım'a ait. Ayrıntı: [11 Kasım 2026 denemeleri](#11-kasım-2026-denemeleri).
+
 Bir `.jpg` görsel, OpenAI biçiminde görsel parçası olarak (`image_url`, base64 veri adresi) gönderildi. İstek `200` döndü ama model görseli görmedi; önceki konuşmadaki bir şemayı anlatmaya başladı. Sonraki denemede görseli tanıyamadığını kendisi söyledi.
 
 Site güncellemesinden sonra (tanıtımda artık "görsel/video algılama" yazıyor) aynı gün tekrar denendi: üzerinde "KARPUZ 4817" yazan, yeşil daire ve sarı üçgen içeren bir PNG, yeni sohbetlerde önce Umay Akıllı'ya, sonra Umay Hızlı'ya gönderildi. İki model de görseli görmediğini söyledi ("Mesajınızda herhangi bir görsel eklenmemiş", "Görseli paylaşmamışsınız"). Giden isteğin görseli standart biçimde (`image_url`, `data:image/png;base64,...`) taşıdığı istemci tarafında doğrulandı; yani görsel API'de iki modele de ulaşmıyor; sitedeki görsel desteği yalnızca sitenin kendi yükleme uç noktası (`/api/chat/upload`) üzerinden çalışıyor gibi görünüyor.
@@ -112,7 +175,7 @@ Belge komutları modelden JSON, Markdown, Mermaid veya `DOSYA:` blokları ister;
 
 ## Token kullanımı ve bağlam uzunluğu
 
-- `GET https://umayzeka.com/v1/models` bir model listesi yerine sitenin ana sayfasını (HTML) döndürüyor; modellerin bağlam uzunluğu API'den öğrenilemiyor ve belgelerde de yazmıyor.
+- 9 Kasım'a kadar `GET https://umayzeka.com/v1/models` sitenin ana sayfasını (HTML) döndürüyordu; 11 Kasım'da liste geliyor ama `context_length` yok, modellerin bağlam uzunluğu API'den öğrenilemiyor.
 - Akışlı yanıtlarda token sayısı gelmesi için CLI istekte `stream_options: {"include_usage": true}` gönderiyor (sunucu bu alanı reddederse oturumun geri kalanında göndermiyor). 8 Kasım 2026'daki denemede istek hatasız yanıtlandı ama akışta kullanım bilgisi (`usage`) gelmedi. Akışsız istekte `usage` geldi (ör. 42 çıktı token), ancak sistem mesajı ve önceki konuşma da gönderildiği hâlde `prompt_tokens` yalnızca son kullanıcı mesajını sayıyordu (3 token). Bu yüzden CLI bağlam boyutunu göstermiyor; token/sn de yalnızca akışta doğru ölçülebildiği için şu an görünmüyor.
 
 **Öneri:** `/v1/models` uç noktası (model adları ve `context_length` ile), akışta `usage` desteği ve tüm isteği sayan `prompt_tokens`, istemcilerin bağlam doluluğunu ve hızı göstermesini sağlar.

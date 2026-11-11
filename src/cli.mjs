@@ -8,7 +8,8 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { chat, friendlyError, validateBaseURL, DEFAULT_BASE_URL, DEFAULT_MODEL } from './client.mjs';
+import { chat, friendlyError, verifyKey, listModels, probeModel, validateBaseURL, DEFAULT_BASE_URL, DEFAULT_MODEL } from './client.mjs';
+import { loadKey, saveKey, deleteKey, storeName } from './keystore.mjs';
 import { ToolRuntime } from './tools.mjs';
 import { t, color, fancy, clean, banner, welcome, box, rule, spinner, fileLink, width, visible, formatStats } from './theme.mjs';
 import { createFrame } from './prompt.mjs';
@@ -19,8 +20,23 @@ import { Memory } from './memory.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const VERSION = (() => { try { return JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch { return ''; } })();
-const MODELS = { 'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı', 'umay-ultra-hizli': 'Umay Ultra Hızlı', 'umay-daha-zeki': 'Umay Daha Zeki' };
-const modelName = id => MODELS[id] ?? id;
+// Models: the menu, /model and /durum follow Umay's GET /v1/models, so models the server adds or drops show
+// up without a new release. The list is kept in modeller.json beside the settings for the next start.
+const MODEL_NAMES = {
+  'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı', 'umay-ultra-hizli': 'Umay Ultra Hızlı', 'umay-daha-zeki': 'Umay Daha Zeki',
+  'umay-mistral-large': 'Mistral Large 4', 'umay-deepseek-flash': 'DeepSeek v4.1 Flash', 'umay-minimax-flash': 'MiniMax M3.1 Flash', 'umay-glm-flash': 'GLM 5.3 Flash',
+};
+const SHORT_NAMES = { 'umay-akilli': 'akilli', 'umay-hizli': 'hizli', 'umay-ultra-hizli': 'ultra', 'umay-daha-zeki': 'zeki' };
+const FALLBACK_MODELS = ['umay-akilli', 'umay-hizli', 'umay-ultra-hizli', 'umay-daha-zeki'].map(id => ({ id, owner: 'umay' }));
+let serverModels = null;
+const modelName = id => MODEL_NAMES[id] ?? id;
+const shortName = id => SHORT_NAMES[id] ?? id.replace(/^umay-/, '');
+// The menu shows Umay's own names; the providers' names in the list (mistralai/...) lead to the same models.
+const menuModels = () => {
+  const own = (serverModels ?? FALLBACK_MODELS).filter(item => item.owner === 'umay').map(item => item.id);
+  return own.length ? own : (serverModels ?? FALLBACK_MODELS).map(item => item.id);
+};
+const knownModel = id => (serverModels ?? FALLBACK_MODELS).some(item => item.id === id);
 // Tool names as shown in color; the plain output keeps the real names.
 const TOOL_LABELS = { read_file: 'Oku', list_dir: 'Listele', search_files: 'Ara', write_file: 'Yaz', edit_file: 'Düzenle', run_command: 'Çalıştır', run_python: 'Python' };
 const toolLabel = name => TOOL_LABELS[name] ?? name;
@@ -38,7 +54,30 @@ function resolveModel(value) {
   if (['hizli', 'hızlı', 'fast', 'umay-hizli'].includes(name)) return 'umay-hizli';
   if (['ultra', 'ultra-hizli', 'ultra-hızlı', 'ultra-fast', 'umay-ultra-hizli'].includes(name)) return 'umay-ultra-hizli';
   if (['zeki', 'daha-zeki', 'smarter', 'umay-zeki', 'umay-daha-zeki'].includes(name)) return 'umay-daha-zeki';
-  return value.trim();
+  // "mistral" → umay-mistral-large, "glm-flash" → umay-glm-flash; a full id from the list is kept as it is.
+  if (knownModel(value.trim())) return value.trim();
+  const own = menuModels();
+  return own.find(id => id === `umay-${name}`) ?? own.find(id => id.startsWith(`umay-${name}`)) ?? value.trim();
+}
+
+const modelsFile = () => path.join(path.dirname(settingsFile), 'modeller.json');
+function loadModelCache() {
+  try {
+    const list = JSON.parse(readFileSync(modelsFile(), 'utf8'));
+    if (Array.isArray(list) && list.every(item => typeof item?.id === 'string')) serverModels = list;
+  } catch { /* no list yet */ }
+}
+// Fetches the list in the background; the cache is rewritten only when the list changed.
+async function refreshModels(config) {
+  const list = await listModels({ apiKey: config.apiKey, baseURL: config.baseURL });
+  if (!list) return false;
+  const changed = JSON.stringify(list) !== JSON.stringify(serverModels);
+  serverModels = list;
+  if (changed) {
+    try { await mkdir(path.dirname(modelsFile()), { recursive: true }); await writeFile(modelsFile(), `${JSON.stringify(list, null, 2)}\n`); }
+    catch { /* a convenience only */ }
+  }
+  return true;
 }
 
 // Thinking: true sends enable_thinking true, false sends false, null sends nothing (the server decides).
@@ -94,13 +133,14 @@ const COMMANDS = [
   { group: 'Sohbet', name: '/bellek', aliases: ['/hafiza', '/hafıza', '/memory'], args: '[ekle|sil|temizle|ac|kapat]', desc: 'Kalıcı notlar; her sohbette Umay\'a hatırlatılır' },
   { group: 'Sohbet', name: '/cok-satir', aliases: ['/multi', '/çok-satır'], desc: 'Çok satırlı mesaj yaz' },
   { group: 'Sohbet', name: '/cikis', aliases: ['/exit', '/quit', '/çıkış'], desc: 'Çık' },
-  { group: 'Model', name: '/model', aliases: ['/models', '/modeller'], args: '[akilli|hizli|ultra|zeki]', desc: 'Modeli gör veya değiştir' },
+  { group: 'Model', name: '/model', aliases: ['/models', '/modeller'], args: '[ad]', desc: 'Modelleri listele veya değiştir (Umay\'ın güncel listesi)' },
+  { group: 'Model', name: '/durum', aliases: ['/saglik', '/sağlık', '/status'], desc: 'Her modele kısa bir soru sor, hangisi çalışıyor gör' },
   { group: 'Model', name: '/akilli', aliases: ['/akıllı'], desc: 'Umay Akıllı: daha güçlü yanıtlar' },
   { group: 'Model', name: '/hizli', aliases: ['/hızlı'], desc: 'Umay Hızlı: daha çabuk yanıtlar' },
   { group: 'Model', name: '/dusunme', aliases: ['/düşünme', '/think'], args: '[ac|kapat|otomatik]', desc: 'Düşünme: açık, kapalı ya da Umay karar versin' },
   { group: 'Model', name: '/dusunce', aliases: ['/düşünce'], desc: 'Son yanıtın düşüncelerini tam göster' },
   { group: 'Model', name: '/akis', aliases: ['/stream', '/akış'], args: '[ac|kapat]', desc: 'Yanıtı canlı yazdır' },
-  { group: 'Model', name: '/anahtar', aliases: ['/key'], desc: 'API anahtarını değiştir' },
+  { group: 'Model', name: '/anahtar', aliases: ['/key'], args: '[sil|durum]', desc: 'API anahtarını değiştir; bu bilgisayarda şifreli saklanır' },
   { group: 'Dosya ve kod', name: '/ekle', aliases: ['/dosya', '/gorsel', '/görsel', '/attach'], args: '<dosya>', desc: 'Sonraki mesaja metin, kod, Word, Excel ekle' },
   { group: 'Dosya ve kod', name: '/ekler', aliases: [], args: '[temizle]', desc: 'Bekleyen ekleri gör veya kaldır' },
   { group: 'Dosya ve kod', name: '/github', aliases: ['/kod-aktar'], args: '<depo>', desc: 'GitHub deposunu indirip incele' },
@@ -155,6 +195,7 @@ function usage() {
 
   ${t.redBold('Ortam')}
     UMAY_API_KEY, UMAY_MODEL, UMAY_THINKING, UMAY_BASE_URL, UMAY_PYTHON, UMAY_TOOL_MODE
+    Anahtar ilk açılışta bir kez sorulur ve bu bilgisayarda saklanır (${storeName()}); UMAY_API_KEY varsa o kullanılır.
     Tercihler (model, düşünme, akış) ${settingsFile} dosyasında tutulur.`);
   help();
 }
@@ -170,11 +211,12 @@ function completer(line) {
   const command = LOOKUP.get(line.slice(0, space).toLowerCase())?.name;
   const arg = line.slice(space + 1);
   const pick = options => [options.filter(option => option.startsWith(arg)), arg];
-  if (command === '/model') return pick(['akilli', 'hizli', 'ultra', 'zeki']);
+  if (command === '/model') return pick(menuModels().map(shortName));
   if (command === '/dusunme') return pick(['ac', 'kapat', 'otomatik']);
   if (['/akis', '/oto'].includes(command)) return pick(['ac', 'kapat']);
   if (command === '/araclar') return pick(['ac', 'kapat', 'text', 'native']);
   if (command === '/ekler') return pick(['temizle']);
+  if (command === '/anahtar') return pick(['sil', 'durum']);
   if (command === '/bellek') return pick(['ekle ', 'sil ', 'temizle', 'ac', 'kapat']);
   if (['/ekle', '/cd', '/yukle', '/kaydet'].includes(command)) return [completePath(arg, command === '/cd'), arg];
   return [[], line];
@@ -295,7 +337,10 @@ async function main() {
     'max-steps': { type: 'string', default: '25' }, yes: { type: 'boolean', default: false },
   } });
   if (values.help) { usage(); return; }
+  // Reading the stored key starts PowerShell on Windows (~0.4 s); it runs while the rest starts up.
+  const storedKey = process.env.UMAY_API_KEY?.trim() ? Promise.resolve(null) : loadKey();
   const saved = loadSettings();
+  loadModelCache();
   // null is a real choice here ("otomatik"), so only an unset or unknown value falls through to the saved one.
   const envThinking = parseThinking(process.env.UMAY_THINKING);
   const config = {
@@ -308,6 +353,8 @@ async function main() {
       : envThinking !== undefined ? envThinking
         : saved.thinkingMode !== undefined ? parseThinking(saved.thinkingMode) ?? null : saved.thinking === true ? true : null,
     apiKey: process.env.UMAY_API_KEY?.trim(),
+    // Where the key came from: env (UMAY_API_KEY or .env), stored (saved on this computer) or typed.
+    keySource: process.env.UMAY_API_KEY?.trim() ? 'env' : undefined,
     maxSteps: Number(values['max-steps']),
     toolMode: values['tool-mode'] ?? process.env.UMAY_TOOL_MODE ?? 'text',
     memory: saved.memory !== false,
@@ -319,6 +366,103 @@ async function main() {
   if (!config.model) throw new Error('Model adı boş olamaz.');
   if (!Number.isInteger(config.maxSteps) || config.maxSteps < 1 || config.maxSteps > 100) {
     throw new Error('--max-steps 1 ile 100 arasında bir tam sayı olmalı.');
+  }
+
+  async function useStoredKey() {
+    if (config.apiKey) return;
+    const key = await storedKey;
+    if (key) { config.apiKey = key; config.keySource = 'stored'; }
+  }
+
+  // Asks for the key, checks it with the server and keeps it on this computer, so it is asked only once.
+  // Returns false when nothing was entered or the server refused three keys in a row.
+  async function enterKey() {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const key = await readKey();
+      if (!key) return false;
+      const spin = color ? spinner('anahtar kontrol ediliyor', { hint: '' }) : null;
+      let accepted;
+      try { accepted = await verifyKey({ apiKey: key, baseURL: config.baseURL, model: config.model }); }
+      finally { spin?.stop(); }
+      if (accepted === false) {
+        showError(`Umay bu anahtarı kabul etmedi (HTTP 401).${key.startsWith('umay-sk-') ? '' : ' Anahtar umay-sk- ile başlamalı.'} Panelden kopyalayıp tekrar yapıştır.`);
+        continue;
+      }
+      config.apiKey = key; config.keySource = 'typed';
+      try {
+        await saveKey(key);
+        config.keySource = 'stored';
+        ok(`Anahtar ${accepted ? 'doğrulandı ve ' : ''}bu bilgisayara kaydedildi ${t.dim(`(${storeName()})`)}`);
+        if (accepted === null) note('Sunucuya ulaşılamadı, anahtar denenemedi. Yanlışsa /anahtar ile değiştir.');
+        note('Bir daha sorulmayacak. Silmek için /anahtar sil.');
+      } catch (error) {
+        showError(`Anahtar kaydedilemedi (${error.message}); bu oturumda kullanılacak.`);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // The model list needs no key. In a terminal it is asked for at once and arrives while the rest starts up;
+  // a one-shot run asks only when it needs it, so a quick question does not wait for it to end.
+  let modelsPromise;
+  const modelsFetched = () => (modelsPromise ??= refreshModels(config));
+  if (process.stdin.isTTY && values.prompt === undefined) modelsFetched();
+  // A short name given before the list was known ("--model mistral") is settled once it arrives.
+  async function settleModel() {
+    if (knownModel(config.model)) return;
+    await modelsFetched();
+    config.model = resolveModel(config.model);
+    if (serverModels && !knownModel(config.model)) warnUnknown(config.model);
+  }
+  const warnUnknown = id => console.error(`  ${t.yellow('!')} ${t.yellow(`"${clean(id)}" Umay'ın model listesinde yok; Umay bilinmeyen adları sessizce Umay Akıllı'ya yönlendiriyor. /model ile listeyi gör.`)}`);
+
+  // /durum: asks every model on the list for one word and shows which ones answer properly.
+  async function modelStatus(signal) {
+    await modelsFetched();
+    const ids = menuModels();
+    const spin = color ? spinner(`modeller deneniyor · 0/${ids.length}`, { hint: 'Ctrl+C durdurur' }) : null;
+    let done = 0;
+    const results = [];
+    try {
+      // Umay takes at most three requests a second, so the questions leave 400 ms apart and run together.
+      for (const id of ids) {
+        results.push(probeModel({ apiKey: config.apiKey, baseURL: config.baseURL, model: id, signal })
+          .then(result => { spin?.update(`modeller deneniyor · ${++done}/${ids.length}`); return result; }));
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+      return await Promise.all(results);
+    } finally { spin?.stop(); }
+  }
+  function showStatus(results) {
+    const seconds = value => `${value.toFixed(1).replace('.', ',')} sn`;
+    const width = Math.max(...results.map(result => modelName(result.model).length)) + 2;
+    console.log(`\n  ${t.white('Model durumu')} ${t.dim(`· ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} · her modele düşünme kapalı tek kelimelik bir soru`)}`);
+    const good = [];
+    for (const result of results) {
+      const answer = clean(result.reply ?? '').trim();
+      const right = answer.toLocaleUpperCase('tr').includes('ANKARA');
+      let icon, detail;
+      if (result.error === 'timeout') { icon = t.red('✗'); detail = `${seconds(result.seconds)} içinde yanıt yok`; }
+      else if (result.error === 'connection') { icon = t.red('✗'); detail = 'bağlantı kurulamadı veya koptu'; }
+      else if (result.status === 401) { icon = t.red('✗'); detail = 'anahtar kabul edilmedi (/anahtar)'; }
+      else if (result.error) { icon = t.red('✗'); detail = `sunucu hatası: ${clean(result.error).slice(0, 60)}`; }
+      else if (!answer) { icon = t.red('✗'); detail = 'boş yanıt'; }
+      else if (!right) { icon = t.red('✗'); detail = `beklenmeyen yanıt: "${answer.replace(/\s+/g, ' ').slice(0, 28)}…"`; }
+      else if (result.seconds > 20) { icon = t.yellow('◐'); detail = 'çalışıyor ama yavaş'; good.push(result); }
+      else { icon = t.green('✓'); detail = 'çalışıyor'; good.push(result); }
+      if (result.routed && result.routed !== result.model && result.routed.startsWith('umay-')) detail += ` · yanıtı ${modelName(result.routed)} verdi`;
+      const mark = result.model === config.model ? t.red('◆') : ' ';
+      const time = result.error === 'timeout' || result.error === 'connection' ? '' : seconds(result.seconds);
+      console.log(`  ${mark} ${icon} ${t.text(modelName(result.model).padEnd(width))}${t.dim(time.padStart(8))}  ${t.dim(detail)}`);
+    }
+    console.log();
+    note(`${good.length}/${results.length} model düzgün yanıt verdi. ◆ seçili model.`);
+    // The chosen model is on the list and failed: name the quickest one that works.
+    const quickest = good.toSorted((a, b) => a.seconds - b.seconds)[0];
+    if (results.some(result => result.model === config.model) && !good.some(result => result.model === config.model) && quickest) {
+      console.log(`  ${t.yellow('!')} ${t.yellow(`Seçili model (${modelName(config.model)}) şu an düzgün yanıt vermiyor. Çalışan birine geç: /model ${shortName(quickest.model)}`)}`);
+    }
   }
 
   currentDir = path.resolve(values.cwd || process.cwd());
@@ -674,11 +818,29 @@ async function main() {
         if (!['/gonder', '/gönder', '/send'].includes(line?.trim()) || !lines.join('\n').trim()) { note('Vazgeçildi.'); return; }
         return { send: lines.join('\n') };
       }
-      case '/model':
-        if (arg) { config.model = resolveModel(arg); await saveSettings(config); }
-        console.log(`  ${t.white('Model:')} ${t.redBold(modelName(config.model))} ${t.dim(`(${config.model})`)}`);
-        if (!arg) note('Seçenekler: /akilli (Umay Akıllı, güçlü) · /hizli (Umay Hızlı, çabuk) · /model ultra (Umay Ultra Hızlı) · /model zeki (Umay Daha Zeki)');
+      case '/model': {
+        await modelsFetched();
+        if (arg) {
+          config.model = resolveModel(arg);
+          await saveSettings(config);
+          ok(`Model: ${t.redBold(modelName(config.model))} ${t.dim(`(${config.model})`)}`);
+          if (serverModels && !knownModel(config.model)) warnUnknown(config.model);
+          return;
+        }
+        console.log(`  ${t.white('Model:')} ${t.redBold(modelName(config.model))} ${t.dim(`(${config.model})`)}\n`);
+        const ids = menuModels();
+        const size = Math.max(...ids.map(id => shortName(id).length)) + 3;
+        for (const id of ids) console.log(`  ${id === config.model ? t.red('◆') : ' '} ${t.white(shortName(id).padEnd(size))}${t.text(modelName(id))}`);
+        console.log();
+        note(`${serverModels ? 'Liste Umay\'dan alındı.' : 'Umay\'ın listesi alınamadı; bilinen modeller gösteriliyor.'} Değiştirmek için /model <ad>, hangisi çalışıyor görmek için /durum.`);
         return;
+      }
+      case '/durum': {
+        active = new AbortController();
+        try { showStatus(await modelStatus(active.signal)); }
+        finally { active = undefined; }
+        return;
+      }
       case '/akilli': case '/hizli':
         config.model = command.name === '/akilli' ? 'umay-akilli' : 'umay-hizli';
         await saveSettings(config);
@@ -704,13 +866,30 @@ async function main() {
         await saveSettings(config);
         ok(`Canlı akış ${config.stream ? 'açık' : 'kapalı'}.`); return;
       case '/anahtar': {
+        const sub = arg.toLocaleLowerCase('tr');
+        const envNote = () => note('UMAY_API_KEY ortam değişkeni (veya .env) ayarlı olduğu sürece açılışta o kullanılır.');
+        if (sub === 'sil') {
+          const removed = await deleteKey();
+          ok(removed ? 'Kayıtlı anahtar bu bilgisayardan silindi.' : 'Bu bilgisayarda kayıtlı anahtar yok.');
+          if (config.keySource === 'stored') config.keySource = 'typed';
+          if (config.keySource === 'env') envNote();
+          else note('Bu oturum sürüyor; sonraki açılışta anahtar sorulur.');
+          return;
+        }
+        if (sub === 'durum') {
+          note(`Anahtar: ${{ env: 'UMAY_API_KEY ortam değişkeninden (veya .env dosyasından)', stored: `bu bilgisayarda kayıtlı, ${storeName()}`, typed: 'bu oturumda girildi, kayıtlı değil' }[config.keySource] ?? 'yok'}`);
+          return;
+        }
+        if (sub) throw new UserError('Kullanım: /anahtar (değiştir), /anahtar sil, /anahtar durum');
         // Checked before the prompt is closed: a failure after that would end the whole session.
         if (!process.stdin.isTTY) throw new UserError('Anahtar yalnızca etkileşimli terminalde girilebilir; UMAY_API_KEY ortam değişkenini kullan.');
+        const fromEnv = config.keySource === 'env';
         rl.close();
-        let key;
-        try { key = await readKey(); } finally { rl = makeInterface(); }
-        if (key) config.apiKey = key;
-        ok(key ? 'Anahtar güncellendi.' : 'Anahtar değiştirilmedi.'); return;
+        let changed;
+        try { changed = await enterKey(); } finally { rl = makeInterface(); }
+        if (!changed) ok('Anahtar değiştirilmedi.');
+        else if (fromEnv) envNote();
+        return;
       }
       case '/ekle': {
         if (!arg) throw new UserError('Kullanım: /ekle dosya.txt (metin, kod, .docx, .xlsx, .pptx)');
@@ -792,8 +971,9 @@ ${rule('Son düşünce')}`);
   // UMAY_INTERACTIVE=1 keeps the command loop with piped input, for scripted checks.
   const oneShot = values.prompt !== undefined || (!process.stdin.isTTY && process.env.UMAY_INTERACTIVE !== '1');
   if (oneShot) {
-    if (!config.apiKey && values.prompt !== undefined && process.stdin.isTTY) config.apiKey = await readKey();
-    if (!config.apiKey) throw new Error('Tek soru veya boru girişi için UMAY_API_KEY ortam değişkenini ayarla.');
+    await useStoredKey();
+    if (!config.apiKey && values.prompt !== undefined && process.stdin.isTTY) await enterKey();
+    if (!config.apiKey) throw new Error('Anahtar yok: umay ile bir kez anahtarını gir (bu bilgisayarda saklanır) veya UMAY_API_KEY ortam değişkenini ayarla.');
     let prompt = values.prompt;
     if (prompt === undefined) {
       process.stdin.setEncoding('utf8');
@@ -808,6 +988,8 @@ ${rule('Son düşünce')}`);
       // Looked up like a typed command, so /şema, /excel and /belge work here as they do in the chat.
       const typed = /^\/\S+/.exec(prompt.trim())?.[0];
       const kind = typed && LOOKUP.get(typed.toLowerCase())?.kind;
+      if (typed && LOOKUP.get(typed.toLowerCase())?.name === '/durum') { showStatus(await modelStatus(abort.signal)); return; }
+      await settleModel();
       if (kind) {
         const result = await runGenerator(kind, prompt.trim().slice(typed.length).trim());
         if (!process.stdout.isTTY) console.log(result.files.join('\n'));
@@ -850,12 +1032,15 @@ ${rule('Son düşünce')}`);
     console.log(`  ${chip('◆', modelName(config.model))} ${chip('düşünme', thinkingName(config.thinking), config.thinking === true)} ${chip('araçlar', toolsOn ? 'açık' : 'kapalı', toolsOn)}${memoryText ? ` ${chip('bellek', memoryText, config.memory)}` : ''}  ${t.dim(fancy ? shortPath(currentDir, 36) : currentDir)}`);
     console.log(`  ${t.dim('İpucu:')} ${t.white('/')} ${t.dim(fancy ? 'yaz → komut menüsü  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim' : 'yaz + Tab → komutlar  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim')}\n`);
   }
+  await useStoredKey();
   if (!config.apiKey) {
     if (panel) console.log();
+    note('Anahtarını bir kez gir; bu bilgisayarda saklanır ve bir daha sorulmaz.');
     note('Anahtar: umayzeka.com → Geliştirici & API Paneli → Yeni Anahtar Oluştur');
-    config.apiKey = await readKey();
+    await enterKey();
   }
   if (!config.apiKey) throw new Error('API anahtarı girilmedi.');
+  await settleModel();
   if (!fancy) console.log(`\n  ${t.white('Bugün senin için ne yapabilirim?')}`);
 
   // The framed prompt: its status line, the gray text in the empty input and the entries of the live menu.

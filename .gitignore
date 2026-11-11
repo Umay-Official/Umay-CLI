@@ -7,6 +7,11 @@ sohbetler/
 .test-tmp/
 __pycache__/
 deneme/
+notlar/
+# Kayıtlı API anahtarı ve model listesi (UMAY_SETTINGS göreli bir yol gösterirse repo içine düşebilir)
+anahtar.dpapi
+/anahtar
+/modeller.json
 
 # İşletim sistemi ve editör dosyaları
 Thumbs.db
