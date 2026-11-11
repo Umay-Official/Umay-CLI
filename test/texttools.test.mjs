@@ -153,6 +153,27 @@ test('arguments written in the wrong place are put where the tool expects them',
   assert.match(parseToolCalls('<tool_call>{"name":"read_file","arguments":"README.md"}</tool_call>').calls[0].error, /okunamadı/);
 });
 
+test('unescaped quotes inside a value are read as content; the value is never cut short', () => {
+  const tools = [
+    { name: 'write_file', parameters: { properties: { path: {}, content: {} }, required: ['path', 'content'] } },
+    { name: 'edit_file', parameters: { properties: { path: {}, old_text: {}, new_text: {} }, required: ['path', 'old_text', 'new_text'] } },
+    { name: 'run_python', parameters: { properties: { code: {}, timeout: {} }, required: ['code'] } },
+  ];
+  const read = text => parseToolCalls(`<tool_call>\n${text}\n</tool_call>`, tools).calls[0];
+  assert.deepEqual(read('{"name": "write_file", "arguments": {"path": "a.py", "content": "x = 1\\n# Not: "tırnak" burada\\nprint("")\\ny = {"a": "b", "c": 2}\\n"}}').args,
+    { path: 'a.py', content: 'x = 1\n# Not: "tırnak" burada\nprint("")\ny = {"a": "b", "c": 2}\n' });
+  assert.deepEqual(read('{"name":"run_python","arguments":{"code":"print("TESTLER GEÇTİ")","timeout":120}}').args,
+    { code: 'print("TESTLER GEÇTİ")', timeout: 120 });
+  assert.deepEqual(read('{"name":"edit_file","arguments":{"path":"t.py","old_text":"a = "x"","new_text":"a = "y""}}').args,
+    { path: 't.py', old_text: 'a = "x"', new_text: 'a = "y"' });
+  // Content that itself has an argument name as a key cannot be told apart: refused, not cut.
+  assert.match(read('{"name": "write_file", "arguments": {"path": "p.json", "content": "{"version": "1", "name": "app"}"}}').error, /okunamadı/);
+  assert.match(read('{"name": "write_file", "arguments": {"path": "a.py", "content": "yarım "kalan').error, /okunamadı/);
+  // Short values too: the plain repair used to end them at the first quote and drop the rest as stray marks.
+  assert.deepEqual(read('{"name":"run_python","arguments":{"code":"print("hi")"}}').args, { code: 'print("hi")' });
+  assert.match(parseToolCalls('<tool_call>{"name":"run_python","arguments":{"code":"print("hi")"}}</tool_call>').calls[0].error, /okunamadı/);
+});
+
 test('calls that did not run are reported instead of dropped silently', () => {
   const cut = parseToolCalls('Okuyorum.\n<tool_call>\n');
   assert.equal(cut.calls.length, 1);

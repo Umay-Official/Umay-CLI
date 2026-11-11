@@ -100,6 +100,9 @@ function unwrap(segment) {
   return lines.slice(first, last).join('\n').trim();
 }
 
+const argumentKeys = schemas => new Set(['name', 'arguments', 'parameters', 'args',
+  ...[...schemas.values()].flatMap(schema => Object.keys(schema.properties ?? {}))]);
+
 function parseSegment(segment, schemas = new Map()) {
   const source = unwrap(segment);
   try {
@@ -110,7 +113,13 @@ function parseSegment(segment, schemas = new Map()) {
       try { object = looseJson(source.slice(0, balanced(source, 0, '{', '}', '"') + 1)); }
       catch {
         try { object = looseJson(source.slice(0, source.lastIndexOf('}') + 1)); }
-        catch (error) { object = repairJson(source, error); }
+        catch (error) {
+          // Unescaped quotes are tried first: the plain repair would end the value at its first quote.
+          try {
+            if (!schemas.size) throw error;
+            object = repairJson(source, error, argumentKeys(schemas));
+          } catch { object = repairJson(source, error); }
+        }
       }
       name = object.name ?? object.tool ?? object.function?.name;
       args = object.arguments ?? object.parameters ?? object.args ?? object.function?.arguments ?? {};
@@ -187,15 +196,32 @@ const REPAIR_TAIL = 12;
 // at the very end: once one is made no more data may follow, so a call broken in the middle (for example an
 // unescaped quote inside code) is still rejected instead of being cut short. Unknown escapes keep their
 // backslash. Throws `original` when the text cannot be repaired.
-function repairJson(text, original) {
+//
+// With `keys` (the names that may follow a value: the tools' arguments, "name", "arguments") quotes inside a
+// value need not be escaped, as in "code": "print("a")". A quote then ends the value only where the call
+// goes on or ends: before , "known key": or before nothing but closing brackets. Any other quote is content,
+// so the value is read whole; it is never cut at the first quote.
+function repairJson(text, original, keys) {
   let i = 0;
   let repairedAt = -1;
+  const seen = new Set();
   const repair = at => { if (repairedAt < 0) repairedAt = at; };
   const space = () => { while (i < text.length && /\s/.test(text[i])) i++; };
-  const string = () => {
+  const nextKey = /[\s}\])]*,?\s*\{?\s*"([A-Za-z_]\w*)"\s*:/y;
+  const ends = (at, soFar) => {
+    // "arguments": "command": "dir" (inner braces left out): the value is itself the next key.
+    if (keys.has(soFar) && /^\s*:/.test(text.slice(at, at + 20))) return true;
+    nextKey.lastIndex = at;
+    const key = nextKey.exec(text)?.[1];
+    if (key) return keys.has(key);
+    const rest = text.slice(at);
+    return !rest.includes('"') && /^\s*([}\])]|$)/.test(rest) && rest.replace(/[\s{}[\]()]/g, '').length <= REPAIR_TAIL;
+  };
+  const string = (value = false) => {
     let out = '';
     for (i++; i < text.length; i++) {
       const char = text[i];
+      if (char === '"' && value && keys && !ends(i + 1, out)) { out += char; continue; }
       if (char === '"') { i++; return out; }
       if (char === '\\' && i + 1 < text.length) {
         const next = text[++i];
@@ -210,7 +236,7 @@ function repairJson(text, original) {
     space();
     if (repairedAt >= 0) throw original;
     if (text[i] === '{' || text[i] === '[') return container();
-    if (text[i] === '"') { const out = string(); if (out === null) throw original; return out; }
+    if (text[i] === '"') { const out = string(true); if (out === null) throw original; return out; }
     const literal = /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|True|False|None)/.exec(text.slice(i));
     if (!literal) throw original;
     i += literal[0].length;
@@ -241,11 +267,17 @@ function repairJson(text, original) {
       }
       // A colon where a key should start means the value before it swallowed the next key ("...\",\"timeout": 60).
       if (char === ':') throw original;
+      // Words after a value are the rest of a value that an unescaped quote ended early, not stray marks.
+      if (/[\p{L}\p{N}]/u.test(char) && text[i - 1] !== '\\') throw original;
       if (char !== '"') { repair(at); i++; continue; }
       const key = string();
       space();
       if (key === null || text[i] !== ':') { repair(at); continue; }
       i++;
+      // Reading unescaped quotes: a key that is not an argument, or comes twice anywhere in the call, means a
+      // quote inside the content was taken for the end of a value (a JSON file with a "name" key, for example).
+      if (keys && (!keys.has(key) || seen.has(key))) throw original;
+      seen.add(key);
       out[key] = value();
       space();
       // "arguments": "command": "dir": the braces of the inner object were left out. Only a plain name can be
