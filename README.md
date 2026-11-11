@@ -8,7 +8,7 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 
 ## Özellikler
 
-- **Sohbet:** Umay Akıllı ve Umay Hızlı modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
+- **Sohbet:** Umay Akıllı, Umay Hızlı, Umay Ultra Hızlı ve Umay Daha Zeki modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
 - **Komut menüsü:** `/` yazıp Tab'a basınca komutlar tamamlanır; `/` + Enter tüm menüyü açar.
 - **Yerel araçlar:** Umay klasördeki dosyaları listeler, okur, arar, düzenler; PowerShell ve Python çalıştırır. Yazma ve komutlar her seferinde onay ister. Araçlar [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden gelir.
 - **Belge üretimi:** `/sunum` (.pptx), `/dokuman` (.docx), `/rapor` (.xlsx), `/sema` (Mermaid .html), `/proje` (HTML/CSS/JS + .zip).
@@ -71,7 +71,7 @@ Bu klasördeki dosyaları listele
 | | `/bellek`, `/bellek ekle <not>`, `/bellek sil <no>` | Kalıcı notlar: her sohbette Umay'a hatırlatılır (`temizle`, `ac`, `kapat`) |
 | | `/cok-satir` | Çok satırlı mesaj; `/gonder` gönderir, `/iptal` vazgeçer |
 | | `/cikis` | Çık (Ctrl+D veya boş satırda Ctrl+C da çıkar) |
-| Model | `/akilli`, `/hizli`, `/model [akilli\|hizli]` | Umay Akıllı (güçlü) veya Umay Hızlı (çabuk) |
+| Model | `/akilli`, `/hizli`, `/model [akilli\|hizli\|ultra\|zeki]` | Umay Akıllı (güçlü), Umay Hızlı (çabuk), Umay Ultra Hızlı veya Umay Daha Zeki |
 | | `/dusunme [ac\|kapat\|otomatik]` | Düşünme: açık en iyi sonucu verir, kapalı hızlıdır, otomatikte Umay karar verir (varsayılan) |
 | | `/dusunce` | Son yanıtın düşüncesini tam göster |
 | | `/akis [ac\|kapat]` | Canlı yazım akışı |
@@ -173,7 +173,7 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-s
 | Değişken | Açıklama |
 | --- | --- |
 | `UMAY_API_KEY` | API anahtarı |
-| `UMAY_MODEL` | `umay-akilli` (varsayılan) veya `umay-hizli` |
+| `UMAY_MODEL` | `umay-akilli` (varsayılan), `umay-hizli`, `umay-ultra-hizli` veya `umay-daha-zeki` |
 | `UMAY_THINKING` | `ac`, `kapat` veya `otomatik` (varsayılan otomatik) |
 | `UMAY_BASE_URL` | API adresi (varsayılan `https://umayzeka.com/v1`; HTTPS zorunlu, yalnızca localhost için HTTP) |
 | `UMAY_PYTHON` | Kullanılacak Python (varsayılan: Windows'ta `python`, diğer sistemlerde `python3`); PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |

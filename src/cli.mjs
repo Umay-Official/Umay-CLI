@@ -17,7 +17,7 @@ import { GENERATORS, generate } from './documents.mjs';
 import { Memory } from './memory.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const MODELS = { 'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı' };
+const MODELS = { 'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı', 'umay-ultra-hizli': 'Umay Ultra Hızlı', 'umay-daha-zeki': 'Umay Daha Zeki' };
 const modelName = id => MODELS[id] ?? id;
 const ON = ['on', 'ac', 'aç', 'acik', 'açık', 'evet'];
 const OFF = ['off', 'kapat', 'kapali', 'kapalı', 'hayir', 'hayır'];
@@ -31,6 +31,8 @@ function resolveModel(value) {
   const name = value.trim().toLocaleLowerCase('tr');
   if (['akilli', 'akıllı', 'smart', 'umay-akilli'].includes(name)) return 'umay-akilli';
   if (['hizli', 'hızlı', 'fast', 'umay-hizli'].includes(name)) return 'umay-hizli';
+  if (['ultra', 'ultra-hizli', 'ultra-hızlı', 'ultra-fast', 'umay-ultra-hizli'].includes(name)) return 'umay-ultra-hizli';
+  if (['zeki', 'daha-zeki', 'smarter', 'umay-zeki', 'umay-daha-zeki'].includes(name)) return 'umay-daha-zeki';
   return value.trim();
 }
 
@@ -76,7 +78,7 @@ const COMMANDS = [
   { group: 'Sohbet', name: '/bellek', aliases: ['/hafiza', '/hafıza', '/memory'], args: '[ekle|sil|temizle|ac|kapat]', desc: 'Kalıcı notlar; her sohbette Umay\'a hatırlatılır' },
   { group: 'Sohbet', name: '/cok-satir', aliases: ['/multi', '/çok-satır'], desc: 'Çok satırlı mesaj yaz' },
   { group: 'Sohbet', name: '/cikis', aliases: ['/exit', '/quit', '/çıkış'], desc: 'Çık' },
-  { group: 'Model', name: '/model', aliases: ['/models', '/modeller'], args: '[akilli|hizli]', desc: 'Modeli gör veya değiştir' },
+  { group: 'Model', name: '/model', aliases: ['/models', '/modeller'], args: '[akilli|hizli|ultra|zeki]', desc: 'Modeli gör veya değiştir' },
   { group: 'Model', name: '/akilli', aliases: ['/akıllı'], desc: 'Umay Akıllı: daha güçlü yanıtlar' },
   { group: 'Model', name: '/hizli', aliases: ['/hızlı'], desc: 'Umay Hızlı: daha çabuk yanıtlar' },
   { group: 'Model', name: '/dusunme', aliases: ['/düşünme', '/think'], args: '[ac|kapat|otomatik]', desc: 'Düşünme: açık, kapalı ya da Umay karar versin' },
@@ -151,7 +153,7 @@ function completer(line) {
   const command = LOOKUP.get(line.slice(0, space).toLowerCase())?.name;
   const arg = line.slice(space + 1);
   const pick = options => [options.filter(option => option.startsWith(arg)), arg];
-  if (command === '/model') return pick(['akilli', 'hizli']);
+  if (command === '/model') return pick(['akilli', 'hizli', 'ultra', 'zeki']);
   if (command === '/dusunme') return pick(['ac', 'kapat', 'otomatik']);
   if (['/akis', '/oto'].includes(command)) return pick(['ac', 'kapat']);
   if (command === '/araclar') return pick(['ac', 'kapat', 'text', 'native']);
@@ -605,7 +607,7 @@ async function main() {
       case '/model':
         if (arg) { config.model = resolveModel(arg); await saveSettings(config); }
         console.log(`  ${t.white('Model:')} ${t.redBold(modelName(config.model))} ${t.dim(`(${config.model})`)}`);
-        if (!arg) note('Seçenekler: /akilli (Umay Akıllı, güçlü) · /hizli (Umay Hızlı, çabuk)');
+        if (!arg) note('Seçenekler: /akilli (Umay Akıllı, güçlü) · /hizli (Umay Hızlı, çabuk) · /model ultra (Umay Ultra Hızlı) · /model zeki (Umay Daha Zeki)');
         return;
       case '/akilli': case '/hizli':
         config.model = command.name === '/akilli' ? 'umay-akilli' : 'umay-hizli';

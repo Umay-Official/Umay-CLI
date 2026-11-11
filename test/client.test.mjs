@@ -229,6 +229,14 @@ test('CLI one-shot and piped input work end to end', async t => {
   assert.equal(requests[1].body.messages.at(-1).content, 'Çok satırlı\nbir soru');
 });
 
+test('CLI resolves model shortcuts to the API ids', async t => {
+  const { baseURL, requests } = await serverFor(t, (_req, res) => json(res, response('Tamam.')));
+  const cases = [['akilli', 'umay-akilli'], ['hızlı', 'umay-hizli'], ['ultra', 'umay-ultra-hizli'], ['Ultra-Hızlı', 'umay-ultra-hizli'],
+    ['zeki', 'umay-daha-zeki'], ['daha-zeki', 'umay-daha-zeki'], ['umay-daha-zeki', 'umay-daha-zeki']];
+  for (const [name] of cases) assert.equal((await runCLI(['--prompt', 'Test', '--no-stream', '--no-tools', '--model', name, '--base-url', baseURL])).code, 0);
+  assert.deepEqual(requests.map(request => request.body.model), cases.map(([, id]) => id));
+});
+
 test('CLI failure exits nonzero and never echoes credentials', async t => {
   const { baseURL } = await serverFor(t, (_req, res) => json(res, { error: { message: apiKey } }, 401));
   const result = await runCLI(['--prompt', 'Test', '--no-stream', '--base-url', baseURL]);
