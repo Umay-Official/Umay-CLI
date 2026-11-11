@@ -4,7 +4,7 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 
 > Umay'ın resmî komut satırı uygulamasıdır. [Eray Çiçek](https://github.com/cekYc) tarafından geliştirilir ve [Umay Official](https://github.com/Umay-Official) hesabında yayımlanır.
 
-<p align="center"><img src="docs/ekran.png" alt="Umay CLI: açılış ekranı ve /sunum komutu" width="640"></p>
+<p align="center"><img src="docs/ekran.png" alt="Umay CLI v1.2.0: karşılama paneli, gönderilen mesaj, Markdown biçimli yanıt (başlık, maddeler, tablo, kod bloğu) ve altında çerçeveli girdi alanıyla durum satırı" width="680"></p>
 
 ## Özellikler
 
@@ -62,6 +62,10 @@ Bu klasördeki dosyaları listele
 ```
 
 ## Komutlar
+
+<p align="center"><img src="docs/komut-menusu.png" alt="Komut menüsü: /s yazınca girdi alanının altında /sunum, /sema, /kaydet ve /akis listeleniyor, seçili olan vurgulu" width="680"></p>
+
+`/` yazınca eşleşen komutlar girdi alanının altında listelenir: ↑↓ seçer, Tab tamamlar, Enter çalıştırır, Esc kapatır.
 
 | Grup | Komut | İşlev |
 | --- | --- | --- |
@@ -132,7 +136,7 @@ Araçlar, yerel modellerle çalışan [Gambit AI CLI](https://github.com/cekYc/g
 
 Örnek: "hesap.py'deki hatayı bul, düzelt ve test_hesap.py ile doğrula" isteğinde Umay dosyaları okuyor, düzeltmeyi farkıyla onaya sunuyor, testi onayla çalıştırıp sonucu söylüyor.
 
-<p align="center"><img src="docs/arac-kullanimi.png" alt="Umay CLI araç kullanımı: dosyaları okuma, onaylı düzenleme farkı, onaylı test komutu ve sonuç" width="680"></p>
+<p align="center"><img src="docs/arac-kullanimi.png" alt="Umay CLI araç kullanımı: dosyaları okuma, satır numaralı ve renkli düzenleme farkı için onay, onaylı test komutu ve çıktısı, sonuç" width="680"></p>
 
 | Araç | Ne yapar | Onay |
 | --- | --- | --- |
@@ -196,7 +200,8 @@ src/
   attachments.mjs  /ekle ve /github
   memory.mjs       /bellek: kalıcı notlar
   markdown.mjs     Terminalde akan Markdown görünümü
-  theme.mjs        Renkler, logo, kutular, bekleme animasyonu
+  theme.mjs        Renkler, logo, karşılama paneli, kutular, bekleme animasyonu
+  prompt.mjs       Çerçeveli girdi alanı, durum satırı ve canlı komut menüsü
 python/
   bridge.py        Node.js ile JSON satırları üzerinden konuşan köprü
   tools.py         Araçların uygulaması (Gambit AI CLI'den)
