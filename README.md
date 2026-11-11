@@ -9,14 +9,14 @@ Umay yapay zekası için Türkçe terminal uygulaması. [umayzeka.com](https://u
 ## Özellikler
 
 - **Sohbet:** Umay Akıllı, Umay Hızlı, Umay Ultra Hızlı ve Umay Daha Zeki modelleri, canlı yazım akışı, düşünme modu. Yanıtlar terminalde biçimli görünür: başlıklar, maddeler, kutulu tablolar, kod blokları. Her yanıtın altında süre ve, sunucu bildirirse, üretilen token ve token/sn yazar.
-- **Komut menüsü:** `/` yazıp Tab'a basınca komutlar tamamlanır; `/` + Enter tüm menüyü açar.
+- **Komut menüsü:** `/` yazınca eşleşen komutlar girdi alanının altında listelenir; ↑↓ seçer, Tab tamamlar, Enter çalıştırır. Komut argümanları (model adları, dosya yolları) da aynı listede çıkar. `/` + Enter tüm komutları gösterir.
 - **Yerel araçlar:** Umay klasördeki dosyaları listeler, okur, arar, düzenler; PowerShell ve Python çalıştırır. Yazma ve komutlar her seferinde onay ister. Araçlar [Gambit AI CLI](https://github.com/cekYc/gambit-ai-cli) projemden gelir.
 - **Belge üretimi:** `/sunum` (.pptx), `/dokuman` (.docx), `/rapor` (.xlsx), `/sema` (Mermaid .html), `/proje` (HTML/CSS/JS + .zip).
 - **Uzmanlar konseyi:** `/konsey` ile yazılımcı, tasarımcı ve pazarlamacı bir konuyu tartışır, moderatör özetler.
 - **Bellek:** `/bellek ekle` ile kaydedilen notlar her sohbette Umay'a hatırlatılır; notlar bilgisayarında düz metin dosyada durur.
 - **Ekler ve GitHub:** `/ekle` ile metin, kod, Word, Excel, PowerPoint dosyası; `/github` ile herkese açık bir depoyu indirip incelettirme.
 - **Kıyaslama:** Gambit Bench v2'nin 39 görevinde düşünme açıkken Umay Akıllı 89,4, Umay Hızlı 87,2, Umay Daha Zeki 71,3, Umay Ultra Hızlı 61,7 puan aldı. Grafikler, koşullar ve sınırlar: [docs/KIYASLAMA.md](docs/KIYASLAMA.md).
-- **Kırmızı-beyaz arayüz:** ☾★ logosu, renkli onay kutuları, değişiklik farkları.
+- **Kırmızı-beyaz arayüz:** ☾★ logolu karşılama paneli, çerçeveli girdi alanı ve altında durum satırı (model, düşünme, araçlar, klasör), satır numaralı ve renkli değişiklik farkları, canlı düşünme göstergesi.
 
 ## Gereksinimler
 
@@ -70,7 +70,7 @@ Bu klasördeki dosyaları listele
 | | `/kaydet [dosya.json]`, `/yukle <dosya.json>` | Sohbeti kaydet / aç (var olan dosyanın üzerine yazmaz) |
 | | `/bellek`, `/bellek ekle <not>`, `/bellek sil <no>` | Kalıcı notlar: her sohbette Umay'a hatırlatılır (`temizle`, `ac`, `kapat`) |
 | | `/cok-satir` | Çok satırlı mesaj; `/gonder` gönderir, `/iptal` vazgeçer |
-| | `/cikis` | Çık (Ctrl+D veya boş satırda Ctrl+C da çıkar) |
+| | `/cikis` | Çık (Ctrl+D veya boş satırda Ctrl+C da çıkar; satırda yazı varken Ctrl+C satırı temizler) |
 | Model | `/akilli`, `/hizli`, `/model [akilli\|hizli\|ultra\|zeki]` | Umay Akıllı (güçlü), Umay Hızlı (çabuk), Umay Ultra Hızlı veya Umay Daha Zeki |
 | | `/dusunme [ac\|kapat\|otomatik]` | Düşünme: açık en iyi sonucu verir, kapalı hızlıdır, otomatikte Umay karar verir (varsayılan) |
 | | `/dusunce` | Son yanıtın düşüncesini tam göster |
@@ -178,6 +178,8 @@ Seçenekler: `--model <ad>`, `--hizli`, `--dusunme`, `--dusunme-kapali`, `--no-s
 | `UMAY_BASE_URL` | API adresi (varsayılan `https://umayzeka.com/v1`; HTTPS zorunlu, yalnızca localhost için HTTP) |
 | `UMAY_PYTHON` | Kullanılacak Python (varsayılan: Windows'ta `python`, diğer sistemlerde `python3`); PATH'te değilse tam yolu, örneğin `C:\Python314\python.exe` |
 | `UMAY_TOOL_MODE` | `text` (varsayılan) veya yerleşik araç çağrısı destekleyen sunucular için `native` |
+| `UMAY_ARAYUZ` | `sade` yazılırsa çerçeveli girdi alanı ve canlı komut menüsü yerine düz `sen ❯` satırı kullanılır (terminal yeni görünümü düzgün çizmiyorsa) |
+| `NO_COLOR` | Ayarlıysa renkler ve çerçeveli arayüz kapanır |
 | `UMAY_PROTECTED_DIRS` | Yazma araçlarına kapalı klasörler; Windows'ta `;`, diğer sistemlerde `:` ile ayrılır |
 | `UMAY_IMAGES` | `1` ise görsel eklemeye izin verir (Umay API şu an görselleri işlemiyor) |
 | `UMAY_SETTINGS` | Tercih dosyasının yolu (varsayılan `~/.umay/ayarlar.json`) |

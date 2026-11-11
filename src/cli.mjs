@@ -10,15 +10,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { chat, friendlyError, validateBaseURL, DEFAULT_BASE_URL, DEFAULT_MODEL } from './client.mjs';
 import { ToolRuntime } from './tools.mjs';
-import { t, color, clean, banner, box, rule, spinner, fileLink, width, formatStats } from './theme.mjs';
+import { t, color, fancy, clean, banner, welcome, box, rule, spinner, fileLink, width, visible, formatStats } from './theme.mjs';
+import { createFrame } from './prompt.mjs';
 import { markdownStream } from './markdown.mjs';
 import { loadAttachment, buildUserContent, importGitHub, UserError } from './attachments.mjs';
 import { GENERATORS, generate } from './documents.mjs';
 import { Memory } from './memory.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+const VERSION = (() => { try { return JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch { return ''; } })();
 const MODELS = { 'umay-akilli': 'Umay Akıllı', 'umay-hizli': 'Umay Hızlı', 'umay-ultra-hizli': 'Umay Ultra Hızlı', 'umay-daha-zeki': 'Umay Daha Zeki' };
 const modelName = id => MODELS[id] ?? id;
+// Tool names as shown in color; the plain output keeps the real names.
+const TOOL_LABELS = { read_file: 'Oku', list_dir: 'Listele', search_files: 'Ara', write_file: 'Yaz', edit_file: 'Düzenle', run_command: 'Çalıştır', run_python: 'Python' };
+const toolLabel = name => TOOL_LABELS[name] ?? name;
 const ON = ['on', 'ac', 'aç', 'acik', 'açık', 'evet'];
 const OFF = ['off', 'kapat', 'kapali', 'kapalı', 'hayir', 'hayır'];
 const settingsFile = process.env.UMAY_SETTINGS || path.join(os.homedir(), '.umay', 'ayarlar.json');
@@ -55,6 +60,17 @@ function toggle(arg, current, usage) {
 }
 
 const isDirectory = target => statSync(target, { throwIfNoEntry: false })?.isDirectory() === true;
+
+// A folder for a narrow place: the home folder becomes ~, and a long path keeps its last folders.
+function shortPath(dir, max = 40) {
+  const home = os.homedir();
+  const text = dir === home || dir.startsWith(home + path.sep) ? `~${dir.slice(home.length)}` : dir;
+  if (text.length <= max) return text;
+  const parts = text.split(path.sep);
+  let tail = parts.pop();
+  while (parts.length > 1 && tail.length + parts.at(-1).length + 3 <= max) tail = `${parts.pop()}${path.sep}${tail}`;
+  return tail.length + 2 <= max ? `…${path.sep}${tail}` : `…${tail.slice(-(max - 1))}`;
+}
 
 function loadSettings() {
   try { return JSON.parse(readFileSync(settingsFile, 'utf8')); } catch { return {}; }
@@ -115,8 +131,9 @@ function help() {
     }
   }
   lines.push('', `  ${t.redBold('Kısayollar')}`,
+    ...(fancy ? [`    ${t.white('/')}                         Yazdıkça eşleşen komutlar listelenir; ↑↓ seçer, Esc kapatır`] : []),
     `    ${t.white('Tab')}                       Komutu veya dosya yolunu tamamla`,
-    `    ${t.white('/')} + Enter                 Komut menüsünü aç`,
+    `    ${t.white('/')} + Enter                 Tüm komutları göster`,
     `    ${t.white('Ctrl+C')}                    Yanıtı durdur; boş satırda çıkış`,
     '', `  ${t.dim('Sitedeki /derin-arastirma, /yt-özetle ve /mail Umay sunucusunda çalışır; API ile kullanılamaz.')}`, '');
   console.log(lines.join('\n'));
@@ -192,7 +209,9 @@ function ask(rl, prompt, signal, { fresh = false } = {}) {
   }
   if (rl.closed) return Promise.resolve(null);
   return new Promise(resolve => {
-    const done = value => { rl.off('close', close); signal?.removeEventListener('abort', close); resolve(value); };
+    // `asking` tells the framed prompt's output that this question's echo belongs on screen.
+    rl.asking = (rl.asking ?? 0) + 1;
+    const done = value => { rl.asking--; rl.off('close', close); signal?.removeEventListener('abort', close); resolve(value); };
     const close = () => done(null);
     rl.once('close', close);
     signal?.addEventListener('abort', close, { once: true });
@@ -211,18 +230,41 @@ async function readKey() {
   finally { secret.close(); process.stdout.write('\n'); }
 }
 
-function previewLines(preview) {
+// What an approval box shows: a diff with line numbers and tinted rows for file changes, the command or code
+// for the rest.
+function previewLines(name, preview) {
   // Trailing blank lines of a diff would only add empty rows to the box.
-  const lines = clean(preview).replace(/\s+$/, '').split('\n');
-  const shown = lines.slice(0, 40).map(line => {
-    if (/^(\+\+\+|---)/.test(line)) return t.white(line);
-    if (line.startsWith('+')) return t.green(line);
-    if (line.startsWith('-')) return t.red(line);
-    if (line.startsWith('@@')) return t.dim(line);
-    return t.text(line);
-  });
-  if (lines.length > 40) shown.push(t.dim(`… ${lines.length - 40} satır daha`));
-  return shown;
+  const lines = clean(preview).replace(/\s+$/, '').replace(/\t/g, '    ').split('\n');
+  const more = lines.length > 40 ? [t.dim(`… ${lines.length - 40} satır daha`)] : [];
+  if (!color) return [...lines.slice(0, 40), ...more];
+  if (name === 'run_command') return [...lines.slice(0, 40).map((line, i) => `${t.red(i ? ' ' : '$')} ${t.text(line)}`), ...more];
+  if (name === 'run_python') return [...lines.slice(0, 40).map((line, i) => `${t.faint(String(i + 1).padStart(3))}  ${t.text(line)}`), ...more];
+  const room = width() - 6;
+  let before = 1;
+  let after = 1;
+  let named = false;    // the "+++ file" line was seen; every later line is content, whatever it starts with
+  let hunks = 0;
+  const rows = [];
+  for (const line of lines.slice(0, 40)) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
+    if (hunk) {
+      if (hunks++) rows.push({ text: t.faint('    ⋯') });
+      before = Number(hunk[1]); after = Number(hunk[2]);
+    } else if (!named && line.startsWith('--- ')) { /* the file is named by the +++ line */ }
+    else if (!named && line.startsWith('+++ ')) { named = true; rows.push({ text: t.white(line.slice(4).replace(/^b\//, '')) }); }
+    else if (!named) rows.push({ text: line.startsWith('#') ? t.yellow(line) : t.text(line) });
+    else if (line.startsWith('+')) rows.push({ sign: '+', number: after++, body: line.slice(1) });
+    else if (line.startsWith('-')) rows.push({ sign: '-', number: before++, body: line.slice(1) });
+    else { rows.push({ sign: ' ', number: after++, body: line.slice(1) }); before++; }
+  }
+  // Tinted rows share one width so the color forms a block.
+  const size = Math.min(room, Math.max(...rows.map(row => row.text ? visible(row.text) : row.body.length + 7)));
+  return [...rows.map(row => {
+    if (row.text) return row.text;
+    const text = `${String(row.number).padStart(4)} ${row.sign} ${row.body}`;
+    const cut = (text.length > size ? text.slice(0, size - 1) + '…' : text).padEnd(size);
+    return row.sign === '+' ? t.added(cut) : row.sign === '-' ? t.removed(cut) : `${t.faint(cut.slice(0, 5))}${t.text(cut.slice(5))}`;
+  }), ...more];
 }
 
 function argSummary(args = {}) {
@@ -300,12 +342,23 @@ async function main() {
   // One answer on screen: spinner, reasoning, Markdown text and tool progress.
   function createView(title = 'Umay') {
     const interactive = color;
+    // In the framed prompt the model is on the status line, so Umay's own answer needs no header: a crescent in
+    // the margin marks where each piece of text starts. Other speakers (the council) keep their header.
+    const marked = fancy && title === 'Umay';
+    // Marks sit in the margin of a marked answer; under a header they line up with the text.
+    const pad = marked ? '' : '  ';
     if (process.stdout.isTTY && title) {
-      console.log(`\n  ${t.red('☾★')} ${t.white(title)} ${t.dim(`· ${modelName(config.model)}${config.thinking === null ? '' : ` · düşünme ${thinkingName(config.thinking)}`}`)}`);
+      console.log(marked ? '' : `\n  ${t.red('☾★')} ${t.white(title)} ${t.dim(`· ${modelName(config.model)}${config.thinking === null ? '' : ` · düşünme ${thinkingName(config.thinking)}`}`)}`);
     }
     let spin = interactive ? spinner(config.thinking === true ? 'düşünüyor' : 'yanıt bekleniyor') : null;
     let ended = true;
-    const md = markdownStream(text => { if (!text) return; process.stdout.write(text); ended = text.endsWith('\n'); });
+    let lead = marked;
+    const md = markdownStream(text => {
+      if (!text) return;
+      // Every block the renderer starts begins with its two-space indent; the first one gets the mark instead.
+      if (lead && text.startsWith('  ')) { text = `${t.red('☾')} ${text.slice(2)}`; lead = false; }
+      process.stdout.write(text); ended = text.endsWith('\n');
+    });
     let state = 'wait';
     // Reasoning is shown as one live line, then collapsed; /dusunce prints it in full.
     let thought = '';
@@ -316,10 +369,11 @@ async function main() {
       if (state !== 'reasoning') return;
       stop();
       const words = stepThought.trim().split(/\s+/).filter(Boolean).length;
-      console.log(`  ${t.dim(`┊ düşündü · ${((Date.now() - thinkStart) / 1000).toFixed(1)} sn · ${words} kelime · /dusunce`)}`);
+      const summary = `düşündü · ${((Date.now() - thinkStart) / 1000).toFixed(1)} sn · ${words} kelime · /dusunce`;
+      console.log(color ? `${pad}${t.faint('✦')} ${t.italic(summary)}` : `  ┊ ${summary}`);
       state = 'wait';
     };
-    const pause = () => { stop(); md.end(); closeThinking(); };
+    const pause = () => { stop(); md.end(); closeThinking(); lead = marked; };
     return {
       text(chunk) {
         stop();
@@ -343,14 +397,29 @@ async function main() {
       tool(event) {
         pause();
         if (event.type === 'start') {
-          console.error(`  ${t.red('›')} ${t.white(event.name)} ${t.dim(argSummary(event.args))}`);
+          console.error(color ? `${pad}${t.red('●')} ${t.white(toolLabel(event.name))}${t.dim(`(${argSummary(event.args)})`)}`
+            : `  › ${event.name} ${argSummary(event.args)}`);
+          if (interactive) spin = spinner('çalışıyor');
           return;
         }
         const bad = /^(Hata:|Kullanıcı|çıkış kodu: (?!0\b))/.test(event.result);
-        const first = clean(event.result.split('\n')[0]);
-        console.error(`  ${bad ? t.red('✗') : t.green('✓')} ${t.dim(first.length > width() - 8 ? first.slice(0, width() - 9) + '…' : first)}`);
-        if (interactive) spin = spinner('düşünüyor');
+        const short = text => text.length > width() - 10 ? text.slice(0, width() - 11) + '…' : text;
+        // The note about line numbers in a read_file result is for the model, and a path inside the working
+        // folder reads better without the folder.
+        const [head, ...rest] = clean(event.result).replace('; soldaki numaralar ve → işareti dosyaya ait değildir', '')
+          .replaceAll(currentDir + path.sep, '').split('\n');
+        if (!color) { console.error(`  ${bad ? '✗' : '✓'} ${short(head)}`); return; }
+        console.error(`${pad}  ${t.faint('└')} ${bad ? t.red('✗') : t.green('✓')} ${bad ? t.red(short(head)) : t.dim(short(head))}`);
+        // A command's exit code says little on its own; the first lines of its output follow.
+        if (['run_command', 'run_python'].includes(event.name)) {
+          const output = rest.filter(line => line.trim());
+          for (const line of output.slice(0, 3)) console.error(`${pad}      ${t.faint(short(line))}`);
+          if (output.length > 3) console.error(`${pad}      ${t.faint(`… ${output.length - 3} satır daha`)}`);
+        }
+        spin = spinner('düşünüyor');
       },
+      // After an approval the tool is still running.
+      resume() { if (interactive && !spin) spin = spinner('çalışıyor'); },
       pause,
       finish() {
         pause();
@@ -371,13 +440,14 @@ async function main() {
       confirm: async ({ name, preview, signal }) => {
         if (!process.stdin.isTTY) return false;
         view?.pause();
-        console.error(box(previewLines(preview), `Onay gerekiyor · ${name}`));
+        console.error(box(previewLines(name, preview), `Onay gerekiyor · ${color ? toolLabel(name) : name}`));
         const terminal = rl ?? createInterface({ input: process.stdin, output: process.stderr });
         if (!rl) terminal.on('SIGINT', () => terminal.close());
+        const choice = (key, label) => color ? `${t.softBadge(key)} ${t.dim(label)}` : `[${key}] ${label}`;
         try {
-          const answer = (await ask(terminal, `  ${t.yellow('?')} ${t.white('Onaylıyor musun?')} ${t.dim('[e] evet · [h] hayır · [t] bu araç için hep evet')} ${t.red('❯')} `, signal, { fresh: true }) ?? '').trim().toLocaleLowerCase('tr');
+          const answer = (await ask(terminal, `  ${t.yellow('?')} ${t.white('Onaylıyor musun?')} ${[choice('e', 'evet'), choice('h', 'hayır'), choice('t', 'bu araç için hep evet')].join(color ? '  ' : ' · ')} ${t.red('❯')} `, signal, { fresh: true }) ?? '').trim().toLocaleLowerCase('tr');
           return ['e', 'evet', 'y', 'yes'].includes(answer) ? true : answer === 't' ? 'always' : false;
-        } finally { if (!rl) terminal.close(); }
+        } finally { if (!rl) terminal.close(); view?.resume(); }
       },
     });
     try { await runtime.start(); }
@@ -758,19 +828,77 @@ ${rule('Son düşünce')}`);
   }
 
   // ----- Interactive mode -----
-  console.log(banner());
-  const chip = (label, value, on = true) => on ? t.softBadge(`${label} ${value}`) : t.dim(` ${label} ${value} `);
-  console.log(`  ${chip('◆', modelName(config.model))} ${chip('düşünme', thinkingName(config.thinking), config.thinking === true)} ${chip('araçlar', toolsOn ? 'açık' : 'kapalı', toolsOn)}${memory.items.length ? ` ${chip('bellek', config.memory ? `${memory.items.length} not` : 'kapalı', config.memory)}` : ''}  ${t.dim(currentDir)}`);
-  console.log(`  ${t.dim('İpucu:')} ${t.white('/')} ${t.dim('yaz + Tab → komutlar  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim')}\n`);
+  const memoryText = memory.items.length ? (config.memory ? `${memory.items.length} not` : 'kapalı') : '';
+  const tip = (keys, text) => `${t.white(keys)} ${t.dim(text)}`;
+  const panel = fancy && welcome({
+    version: VERSION,
+    tips: [
+      tip('/', 'yaz, komut menüsü açılır; ↑↓ ile seç'),
+      tip('/sunum /dokuman /rapor', 'ile belge üret'),
+      tip('/ekle', 'ile dosya ver, sonra sorunu yaz'),
+    ],
+    session: [
+      `${t.red('◆')} ${t.text(modelName(config.model))} ${t.dim(`· düşünme ${thinkingName(config.thinking)}`)}`,
+      t.dim(`araçlar ${toolsOn ? 'açık' : 'kapalı'}${memoryText ? ` · bellek ${memoryText}` : ''}`),
+      t.dim(shortPath(currentDir, 44)),
+    ],
+  });
+  if (panel) console.log(panel);
+  else {
+    console.log(banner());
+    const chip = (label, value, on = true) => on ? t.softBadge(`${label} ${value}`) : t.dim(` ${label} ${value} `);
+    console.log(`  ${chip('◆', modelName(config.model))} ${chip('düşünme', thinkingName(config.thinking), config.thinking === true)} ${chip('araçlar', toolsOn ? 'açık' : 'kapalı', toolsOn)}${memoryText ? ` ${chip('bellek', memoryText, config.memory)}` : ''}  ${t.dim(fancy ? shortPath(currentDir, 36) : currentDir)}`);
+    console.log(`  ${t.dim('İpucu:')} ${t.white('/')} ${t.dim(fancy ? 'yaz → komut menüsü  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim' : 'yaz + Tab → komutlar  ·  /sunum /dokuman /rapor /sema /proje /konsey  ·  /yardim')}\n`);
+  }
   if (!config.apiKey) {
+    if (panel) console.log();
     note('Anahtar: umayzeka.com → Geliştirici & API Paneli → Yeni Anahtar Oluştur');
     config.apiKey = await readKey();
   }
   if (!config.apiKey) throw new Error('API anahtarı girilmedi.');
-  console.log(`\n  ${t.white('Bugün senin için ne yapabilirim?')}`);
+  if (!fancy) console.log(`\n  ${t.white('Bugün senin için ne yapabilirim?')}`);
+
+  // The framed prompt: its status line, the gray text in the empty input and the entries of the live menu.
+  let asked = 0;
+  const frame = fancy ? createFrame({
+    hint: () => asked > 1 ? 'Umay\'a yaz · / ile komutlar' : 'Bugün senin için ne yapabilirim?',
+    status: columns => {
+      const parts = [`${t.red('◆')} ${t.text(modelName(config.model))}`, t.dim(`düşünme ${thinkingName(config.thinking)}`), t.dim(`araçlar ${toolsOn ? 'açık' : 'kapalı'}`)];
+      if (runtime?.auto) parts.push(t.yellow('oto onay açık'));
+      if (attachments.length) parts.push(t.yellow(`+${attachments.length} ek`));
+      const left = `  ${parts.join(t.faint(' · '))}`;
+      const keys = t.faint('/ komutlar · Ctrl+C çıkış');
+      // The folder and the key hints are dropped, in that order, when the line gets too narrow for them.
+      const spread = (start, end) => {
+        const gap = columns - 2 - visible(start) - visible(end);
+        return gap >= 2 ? `${start}${' '.repeat(gap)}${end}` : null;
+      };
+      const room = columns - visible(left) - visible(keys) - 9;
+      return [(room >= 12 && spread(`${left}${t.faint(` · ${shortPath(currentDir, room)}`)}`, keys)) || spread(left, keys) || left];
+    },
+    suggest: line => {
+      const space = line.indexOf(' ');
+      if (space < 0) {
+        const typed = line.toLowerCase();
+        const found = COMMANDS.filter(command => command.name.startsWith(typed));
+        const more = COMMANDS.filter(command => !found.includes(command) &&
+          (command.aliases.some(alias => alias.startsWith(typed)) || (typed.length > 2 && command.name.includes(typed.slice(1)))));
+        return { command: true, exact: LOOKUP.has(typed), from: 0,
+          items: [...found, ...more].map(command => ({ value: command.name, name: command.name, args: command.args, desc: command.desc })) };
+      }
+      const [hits, partial] = completer(line);
+      const about = LOOKUP.get(line.slice(0, space).toLowerCase())?.name === '/model'
+        ? name => modelName(resolveModel(name)) : () => '';
+      return { from: line.length - partial.length,
+        items: hits.length === 1 && hits[0] === partial ? [] : hits.map(hit => ({ value: hit, name: hit, desc: about(hit) })) };
+    },
+  }) : null;
 
   function makeInterface() {
-    const created = createInterface({ input: process.stdin, output: process.stdout, historySize: 200, completer });
+    const created = frame
+      ? createInterface({ input: frame.input, output: frame.output, terminal: true, historySize: 200 })
+      : createInterface({ input: process.stdin, output: process.stdout, historySize: 200, completer });
+    frame?.attach(created);
     created.on('SIGINT', () => active ? active.abort() : created.close());
     created.queued = [];
     created.on('line', line => created.queued.push(line));
@@ -778,12 +906,17 @@ ${rule('Son düşünce')}`);
   }
   rl = makeInterface();
   try {
+    let gap = true;
     while (!rl.closed || rl.queued?.length) {
-      console.log();
-      let input = await ask(rl, `  ${t.redBold('sen')}${attachments.length ? t.dim(` +${attachments.length} ek`) : ''} ${t.red('❯')} `);
+      // An empty Enter redraws the prompt where it was instead of walking down the screen.
+      if (gap || !frame) console.log();
+      gap = true;
+      asked++;
+      let input = frame ? await frame.question()
+        : await ask(rl, `  ${t.redBold('sen')}${attachments.length ? t.dim(` +${attachments.length} ek`) : ''} ${t.red('❯')} `);
       if (input === null) break;
       input = input.trim();
-      if (!input) continue;
+      if (!input) { gap = false; continue; }
       if (input.startsWith('/')) {
         try {
           const result = await runCommand(input);
