@@ -8,8 +8,8 @@ Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Den
 | --- | --- | --- |
 | Sohbet (`/v1/chat/completions`) | ✅ Çalışıyor | JSON ve akış (SSE) yanıtları sorunsuz |
 | Modeller | ⚠️ | `/v1/models` 12 ad listeliyor (11 Kasım); `umay-daha-zeki` artık `umay-ultra-hizli`'ye gidiyor |
-| Umay Akıllı (11 Kasım) | ❌ Bozuk | Her istekte anlamsız, çok dilli token yığını; düşünme açıkken boş yanıt |
-| Umay Hızlı (11 Kasım) | ❌ Yanıt yok | Metin isteklerinde 120 sn'de yanıt yok veya Cloudflare `524` |
+| Umay Akıllı | ✅ 12 Kasım'da düzeldi | 11 Kasım'da her istekte anlamsız, çok dilli token yığını, düşünme açıkken boş yanıt veriyordu |
+| Umay Hızlı | ✅ 12 Kasım'da düzeldi | 11 Kasım'da metin isteklerinde 120 sn'de yanıt yok veya Cloudflare `524` geliyordu |
 | İstek sınırı | ⚠️ | Saniyede en fazla 3 istek (anahtar ve IP başına); `429`, `Retry-After` yok |
 | Bilinmeyen model adı | ⚠️ Hata vermiyor | İstek sessizce `umay-akilli`'ye gidiyor |
 | Yeni modellerin hızı | ⚠️ Çok yavaş | İlk token 10–120 sn; ~2 dakikada gelmezse akış boş kapanıyor |
@@ -18,6 +18,16 @@ Umay CLI geliştirilirken Umay API'si ile yapılan denemelerde görülenler. Den
 | Görseller | ✅ 11 Kasım'dan beri çalışıyor | Görselli istek `umay-hizli`'ye yönlendiriliyor; Mistral Large 4 de görüyor |
 | `max_tokens`, `stop`, `n`, `logprobs`, `response_format`, `seed` | ❌ Yok sayılıyor | İstek hata vermiyor, alanlar etkisiz |
 | Yapılandırılmış çıktı (JSON, Markdown) | ✅ Güvenilir | Belge komutları çoğunlukla ilk denemede doğru biçimde |
+
+## 12 Kasım 2026: tekrar deneme
+
+Bir gün sonra (12 Kasım, 20:40 UTC civarı) aynı denemeler tekrarlandı:
+
+- Sekiz modelin hepsi tek kelimelik soruya doğru yanıt verdi. Umay Akıllı, Hızlı, Ultra Hızlı ve MiniMax M3.1 Flash ~1 sn; GLM 5.3 Flash 19 sn, Mistral Large 4 22 sn, DeepSeek v4.1 Flash 39 sn.
+- Umay Akıllı yeniden düzgün: düşünme açıkken `reasoning_content` ayrı geliyor, kapalıyken ve otomatikte doğru yanıt veriyor. Akışta ilk parça ~1 sn'de geliyor.
+- Model listesi aynı (12 ad). `umay-daha-zeki` hâlâ `umay-ultra-hizli`'ye, listede olmayan adlar hâlâ `umay-akilli`'ye gidiyor.
+- `max_tokens`, `stop`, `n`, `logprobs`, `response_format`, `seed` ve `tools` hâlâ yok sayılıyor; akışta `usage` hâlâ gelmiyor.
+- Saniyede 3 istek sınırı sürüyor, `429` yanıtında `Retry-After` yok. `GET /v1/models` hâlâ anahtarsız yanıt veriyor.
 
 ## 11 Kasım 2026 denemeleri
 
@@ -40,7 +50,9 @@ Yüksek kotalı bir anahtarla, istekler arası en az 450 ms bırakılarak yapıl
 
 Listede olmayan bir ad (`yok-boyle-bir-model`) hâlâ hata vermeden `umay-akilli`'ye gidiyor; o gün o da bozuk çıktı verdi.
 
-### Umay Akıllı bozuk çıktı veriyor
+### Umay Akıllı bozuk çıktı veriyordu
+
+> 12 Kasım'da düzeldi; aşağıdakiler 11 Kasım'a ait.
 
 "Tek kelimeyle cevap ver: Türkiye'nin başkenti?" sorusuna 17:50–18:02 arasında yapılan her istekte `200` ve `finish_reason: "stop"` ile anlamsız metin geldi. Örnek: `‑ végétUSTOMARNING_{\Ker}\,\бо‑_{\,\prote-…`. Düşünme kapalı, açık veya gönderilmemiş fark etmedi; açıkken içerik çoğunlukla boştu (`completion_tokens: 0`). Aynı soruya Ultra Hızlı ve Mistral "Ankara" dedi. Görünüş, sunucuda modelin yanlış tokenizer'la ya da bozuk ağırlıkla çalıştığını düşündürüyor. CLI'nin varsayılan modeli Akıllı olduğu için kullanıcılar şu an anlamsız yanıt görüyor. Aynı saatlerde sitede de (umayzeka.com, Umay Akıllı, Derin Düşünme açık) "selam nasılsın" mesajına 1,7 sn düşünüp boş yanıt verdi; sorun API'ye ya da istemciye özgü değil.
 
